@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BarkWatch - Odseki</title>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
+    <link href="/styles.css" rel="stylesheet">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="left-panel">
+        <div class="panel-header">
+            <h1>Odseki</h1>
+            <p class="panel-subtitle">Iskanje in podatki iz odseki_processed.csv</p>
+        </div>
+
+        <div class="search-block">
+            <label for="odsek-search">Išči po odsek ID</label>
+            <div class="search-row">
+                <input id="odsek-search" type="text" placeholder="npr. 1047" autocomplete="off">
+                <button id="search-btn" type="button">Poišči</button>
+            </div>
+            <div id="suggestions" class="suggestions"></div>
+        </div>
+
+        <div class="info-block">
+            <h2>Podatki odseka</h2>
+            <div id="selected-odsek" class="selected-odsek">Ni izbranega odseka.</div>
+            <div id="odsek-details" class="odsek-details empty">
+                Izberi odsek na karti ali preko iskalnika.
+            </div>
+        </div>
+    </aside>
+
+    <main class="map-area">
+        <div id="map"></div>
+
+        <div class="time-slider-overlay">
+            <div class="time-slider-title">Časovno obdobje (12 mesecev)</div>
+            <div class="time-slider-row">
+                <input id="month-slider" type="range" min="1" max="12" step="1" value="1">
+                <span id="month-label">Mesec 1</span>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
