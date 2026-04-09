@@ -683,7 +683,7 @@ map.on('load', () => {
         type: 'line',
         source: 'odsek-highlight',
         paint: {
-            'line-color': '#2563eb',
+            'line-color': '#62d8e0ff',
             'line-width': 5,
             'line-opacity': 1
         }

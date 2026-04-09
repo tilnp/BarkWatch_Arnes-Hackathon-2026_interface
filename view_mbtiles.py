@@ -10,7 +10,7 @@ import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-MBTILES_FILE = 'odseki_map_vector_final_brezZ.mbtiles'
+MBTILES_FILE = 'data/odseki_map_vector_final_brezZ.mbtiles'
 PORT = 8000
 
 import csv
@@ -534,6 +534,39 @@ class TileHandler(BaseHTTPRequestHandler):
 
         self._serve_static_file(path)
 
+
+def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
+    """Load bbox index from cache file if up-to-date, otherwise rebuild and save."""
+    cache_path = Path(mbtiles_file).with_suffix('.bbox_cache.json')
+    mbtiles_mtime = os.path.getmtime(mbtiles_file)
+
+    if cache_path.exists():
+        try:
+            if os.path.getmtime(cache_path) >= mbtiles_mtime:
+                with cache_path.open('r', encoding='utf-8') as f:
+                    raw = json.load(f)
+                # JSON keys are strings; restore tuple keys
+                index = {tuple(k.split('\x00', 1)): v for k, v in raw.items()}
+                print(f"Bbox index loaded from cache ({len(index)} entries)")
+                return index
+        except Exception as e:
+            print(f"Cache read failed ({e}), rebuilding...")
+
+    print("Building odsek bbox index from tiles (zoom 11)...")
+    index = build_odsek_bbox_index(mbtiles_file, zoom=zoom)
+    print(f"Bbox index: {len(index)} odsek entries")
+
+    try:
+        raw = {f"{ggo}\x00{odsek}": bbox for (ggo, odsek), bbox in index.items()}
+        with cache_path.open('w', encoding='utf-8') as f:
+            json.dump(raw, f, ensure_ascii=False)
+        print(f"Bbox index cached to {cache_path.name}")
+    except Exception as e:
+        print(f"WARNING: Could not write bbox cache: {e}")
+
+    return index
+
+
 def main():
     if not os.path.exists(MBTILES_FILE):
         print(f"ERROR: '{MBTILES_FILE}' not found.")
@@ -548,9 +581,7 @@ def main():
     load_odseki_data()
 
     global ODSEK_BBOX
-    print("Building odsek bbox index from tiles (zoom 11)...")
-    ODSEK_BBOX = build_odsek_bbox_index(MBTILES_FILE, zoom=11)
-    print(f"Bbox index: {len(ODSEK_BBOX)} odsek entries")
+    ODSEK_BBOX = _load_or_build_bbox_index(MBTILES_FILE, zoom=11)
 
     print(f"Serving {MBTILES_FILE}")
     print(f"Serving static files from {STATIC_DIR}")
