@@ -94,6 +94,7 @@ const map = new maplibregl.Map({
                 'source-layer': 'odsek',
                 paint: {
                     'fill-color': '#FF0000',
+                    'fill-color-transition': { duration: 0, delay: 0 },
                     'fill-opacity': 0.45
                 }
             },
@@ -349,21 +350,25 @@ function buildColorExpression(monthIndex) {
     ];
 }
 
-function updateMonthStyle() {
+function updateMonthLabel() {
     const month = Number(monthSlider.value);
     const isForecast = month > HISTORICAL_MONTHS;
     const periodMonth = isForecast ? (month - HISTORICAL_MONTHS) : month;
-
-    monthLabel.textContent = isForecast
-        ? `Napoved ${periodMonth}`
-        : `Podatki ${periodMonth}`;
-
+    monthLabel.textContent = isForecast ? `Napoved ${periodMonth}` : `Podatki ${periodMonth}`;
     monthSlider.classList.toggle('slider-forecast', isForecast);
     monthSlider.classList.toggle('slider-historical', !isForecast);
+}
 
+function applyMonthColor() {
+    const month = Number(monthSlider.value);
     if (map.getLayer('odseki-fill')) {
         map.setPaintProperty('odseki-fill', 'fill-color', buildColorExpression(month));
     }
+}
+
+function updateMonthStyle() {
+    updateMonthLabel();
+    applyMonthColor();
 }
 
 function coordinatesBbox(coords, acc) {
@@ -862,7 +867,8 @@ map.on('load', () => {
     updateMonthStyle();
 });
 
-monthSlider.addEventListener('input', updateMonthStyle);
+monthSlider.addEventListener('input', updateMonthLabel);
+monthSlider.addEventListener('change', applyMonthColor);
 
 map.on('click', 'odseki-fill', (event) => {
     const feature = event.features?.[0];
