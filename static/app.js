@@ -86,7 +86,29 @@ const map = new maplibregl.Map({
                     'line-opacity': 0.75
                 }
             },
-            // NOTE: highlight layer is added dynamically on map load (GeoJSON source)
+            {
+                id: 'odseki-selected-fill',
+                type: 'fill',
+                source: 'odseki',
+                'source-layer': 'odsek',
+                filter: ['literal', false],
+                paint: {
+                    'fill-color': '#2563eb',
+                    'fill-opacity': 0.25
+                }
+            },
+            {
+                id: 'odseki-selected-outline',
+                type: 'line',
+                source: 'odseki',
+                'source-layer': 'odsek',
+                filter: ['literal', false],
+                paint: {
+                    'line-color': '#2563eb',
+                    'line-width': 5,
+                    'line-opacity': 1
+                }
+            }
         ]
     },
     center: SLOVENIA_CENTER,
@@ -509,47 +531,21 @@ async function fetchOdsekById(odsekId) {
     return response.json();
 }
 
-let _highlightReqId = 0;
-
-/** Clear the blue highlight outline. */
+/** Clear the highlight layers. */
 function clearHighlight() {
-    const src = map.getSource('odsek-highlight');
-    if (src) src.setData({ type: 'FeatureCollection', features: [] });
+    if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    ['literal', false]);
+    if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', ['literal', false]);
 }
 
 /**
- * Set highlight geometry directly (e.g. from a clicked tile feature).
- * Accepts a single GeoJSON geometry object or an array of them.
+ * Highlight all tiles whose odsek field matches odsekId.
+ * MapLibre merges tile-clipped polygons natively, so no multi-part artifacts appear.
  */
-function setHighlightGeometry(geometry) {
-    const src = map.getSource('odsek-highlight');
-    if (!src) return;
-    const geoms = Array.isArray(geometry) ? geometry : [geometry];
-    src.setData({
-        type: 'FeatureCollection',
-        features: geoms.filter(Boolean).map(g => ({ type: 'Feature', geometry: g, properties: {} }))
-    });
-}
-
-/**
- * After the map has flown to a bbox, wait for tiles to finish loading then
- * query the exact polygon geometry from vector tiles and highlight it.
- */
-function highlightAfterIdle(odsekId, ggoName) {
-    const reqId = ++_highlightReqId;
-    const onIdle = () => {
-        if (reqId !== _highlightReqId) return; // superseded by newer selection
-        const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
-        const matches = features.filter(f => {
-            const p = f.properties || {};
-            return normalize(String(p.odsek || '')) === normalize(odsekId) &&
-                   normalize(String(p.ggo_naziv || '')) === normalize(ggoName);
-        });
-        if (matches.length > 0) {
-            setHighlightGeometry(matches.map(f => f.geometry));
-        }
-    };
-    map.once('idle', onIdle);
+function setHighlight(odsekId) {
+    if (!odsekId) { clearHighlight(); return; }
+    const f = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
+    if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
+    if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
 }
 
 /**
@@ -583,11 +579,13 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
     selectedOdsekEl.textContent = `Izbran odsek: ${cleanId} | GGO: ${ggoName}`;
     renderDetailsTable(payload.data);
 
+    // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
+    setHighlight(cleanId);
+
     const duration = source === 'panel' ? 1700 : 700;
 
-    // 1. Direct geometry from a map click — highlight immediately, then fly.
+    // 1. Direct geometry from a map click — use the clicked feature's bbox to fly.
     if (featureGeometry) {
-        setHighlightGeometry(featureGeometry);
         const bbox = getBboxFromGeometry(featureGeometry);
         if (bbox) {
             map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration, maxZoom: 14 });
@@ -595,20 +593,17 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
         }
     }
 
-    // 2. Bbox from server — fly there, then query tile features for exact geometry.
+    // 2. Bbox from server — fly there.
     if (payload.bbox) {
         const b = payload.bbox;
         map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 70, duration, maxZoom: 14 });
-        highlightAfterIdle(cleanId, ggoName);
         return;
     }
 
-    // 3. Fallback: tile sweep (may miss tiny odseki at zoom 8).
+    // 3. Fallback: tile sweep.
     const ggoCode = String(payload.key?.ggo_code || selectedGgoCode() || '').trim();
     const moved = await locateOdsek(cleanId, ggoCode, ggoName, source);
-    if (moved) {
-        highlightAfterIdle(cleanId, ggoName);
-    } else {
+    if (!moved) {
         console.warn('Odsek location could not be resolved:', cleanId, ggoName);
     }
 }
@@ -672,22 +667,6 @@ map.on('load', () => {
     map.setMaxBounds(initialBounds);
 
     updateMonthStyle();
-
-    // GeoJSON-based highlight overlay — independent of vector tile loading state.
-    map.addSource('odsek-highlight', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] }
-    });
-    map.addLayer({
-        id: 'odsek-highlight-line',
-        type: 'line',
-        source: 'odsek-highlight',
-        paint: {
-            'line-color': '#62d8e0ff',
-            'line-width': 5,
-            'line-opacity': 1
-        }
-    });
 });
 
 monthSlider.addEventListener('input', updateMonthStyle);
@@ -746,7 +725,7 @@ map.on('click', 'odseki-fill', (event) => {
             searchInput.value = clickedOdsek;
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
             renderDetailsTable(payload.data);
-            setHighlightGeometry(geometry);
+            setHighlight(clickedOdsek);
             const bbox = getBboxFromGeometry(geometry);
             if (bbox) {
                 map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: 700, maxZoom: 14 });
