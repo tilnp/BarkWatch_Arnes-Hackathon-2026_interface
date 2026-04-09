@@ -116,7 +116,8 @@ html, body {
     cursor: pointer;
 }
 
-.suggestion-item:hover {
+.suggestion-item:hover,
+.suggestion-item.active {
     background: #eff6ff;
     border-color: #bfdbfe;
 }

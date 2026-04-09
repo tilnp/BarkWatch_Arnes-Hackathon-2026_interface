@@ -742,11 +742,46 @@ searchInput.addEventListener('input', () => {
 });
 
 searchInput.addEventListener('keydown', (event) => {
+    const items = Array.from(suggestionsEl.querySelectorAll('.suggestion-item'));
+    const active = suggestionsEl.querySelector('.suggestion-item.active');
+    const idx = active ? items.indexOf(active) : -1;
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (!items.length) return;
+        if (active) active.classList.remove('active');
+        const next = items[(idx + 1) % items.length];
+        next.classList.add('active');
+        next.scrollIntoView({ block: 'nearest' });
+        return;
+    }
+
+    if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (!items.length) return;
+        if (active) active.classList.remove('active');
+        const prev = items[(idx - 1 + items.length) % items.length];
+        prev.classList.add('active');
+        prev.scrollIntoView({ block: 'nearest' });
+        return;
+    }
+
     if (event.key === 'Enter') {
         event.preventDefault();
-        selectOdsek(searchInput.value, 'manual').catch((err) => {
-            console.error('selectOdsek failed', err);
-        });
+        if (active) {
+            selectOdsek(active.dataset.odsek, 'panel').catch((err) => {
+                console.error('selectOdsek failed', err);
+            });
+        } else {
+            selectOdsek(searchInput.value, 'manual').catch((err) => {
+                console.error('selectOdsek failed', err);
+            });
+        }
+        return;
+    }
+
+    if (event.key === 'Escape') {
+        if (active) active.classList.remove('active');
     }
 });
 
