@@ -10,11 +10,26 @@ const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260 };
 
 let ANIM = ANIM_NORMAL;
 
-const DISPLAY_FIELDS = [
-    'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
-    'katgozd_naziv', 'ohranjen_naziv', 'relief_naziv', 'lega_naziv',
-    'pozar_naziv', 'intgosp_naziv', 'krajime', 'grt1_naziv'
-];
+// Mapping: CSV column name → display label shown in the details panel.
+// To rename a field, change the value on the right. To reorder, move the entry.
+const FIELD_LABELS = {
+    ggo_naziv:      'Gozdnogospodarsko območje',
+    odsek:          'Odsek ID',
+    povrsina:       'Površina (ha)',
+    gge_naziv:      'Gozdnogospodarska enota',
+    ke_naziv:       'Krajevna enota',
+    revir_naziv:    'Revir',
+    katgozd_naziv:  'Kategorija gozda',
+    ohranjen_naziv: 'Ohranjenost',
+    relief_naziv:   'Relief',
+    lega_naziv:     'Lega',
+    pozar_naziv:    'Požarna ogroženost',
+    intgosp_naziv:  'Intenzivnost gospodarjenja',
+    krajime:        'Krajevno ime',
+    grt1_naziv:     'Gozdni rastiščni tip',
+};
+
+const DISPLAY_FIELDS = Object.keys(FIELD_LABELS);
 
 const HISTORICAL_MONTH_PALETTES = [
     ['#e11d48', '#fb7185', '#fdba74', '#facc15', '#22c55e'],
@@ -563,8 +578,9 @@ function renderDetailsTable(data) {
     }
 
     const rows = DISPLAY_FIELDS.map((field) => {
+        const label = FIELD_LABELS[field] ?? field;
         const value = data[field] ?? '';
-        return `<tr><th>${field}</th><td>${String(value) || '-'}</td></tr>`;
+        return `<tr><th>${label}</th><td>${String(value) || '-'}</td></tr>`;
     }).join('');
 
     detailsEl.classList.remove('empty');

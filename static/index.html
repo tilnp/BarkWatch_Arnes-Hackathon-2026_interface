@@ -11,30 +11,32 @@
 <body>
 <div class="app-shell">
     <aside class="left-panel">
-        <div class="panel-header">
-            <h1>BarkWatch Slovenija</h1>
-            <p class="panel-subtitle">Iskanje in podatki o gozdnih odsekih</p>
-        </div>
-
-        <div class="search-block">
-            <label for="ggo-select">Izberi Gozdnogospodarsko območje</label>
-            <select id="ggo-select">
-                <option value="">-- izberi GGO --</option>
-            </select>
-    
-            <label for="odsek-search">Išči po odsek ID</label>
-            <div class="search-row">
-                <input id="odsek-search" type="text" placeholder="Najprej izberi GGO" autocomplete="off" disabled>
-                <button id="search-btn" type="button" disabled>Poišči</button>
+        <div class="panel-scroll">
+            <div class="panel-header">
+                <h1>BarkWatch Slovenija</h1>
+                <p class="panel-subtitle">Iskanje in podatki o gozdnih odsekih</p>
             </div>
-            <div id="suggestions" class="suggestions"></div>
-        </div>
 
-        <div class="info-block">
-            <h2>Podatki odseka</h2>
-            <div id="selected-odsek" class="selected-odsek">Ni izbranega odseka.</div>
-            <div id="odsek-details" class="odsek-details empty">
-                Izberi odsek na karti ali preko iskalnika.
+            <div class="search-block">
+                <label for="ggo-select">Izberi Gozdnogospodarsko območje</label>
+                <select id="ggo-select">
+                    <option value="">-- izberi GGO --</option>
+                </select>
+
+                <label for="odsek-search">Išči po odsek ID</label>
+                <div class="search-row">
+                    <input id="odsek-search" type="text" placeholder="Najprej izberi GGO" autocomplete="off" disabled>
+                    <button id="search-btn" type="button" disabled>Poišči</button>
+                </div>
+                <div id="suggestions" class="suggestions"></div>
+            </div>
+
+            <div class="info-block">
+                <h2>Podatki odseka</h2>
+                <div id="selected-odsek" class="selected-odsek">Ni izbranega odseka.</div>
+                <div id="odsek-details" class="odsek-details empty">
+                    Izberi odsek na karti ali preko iskalnika.
+                </div>
             </div>
         </div>
 
