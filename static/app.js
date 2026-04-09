@@ -108,7 +108,7 @@ const map = new maplibregl.Map({
                 source: 'odseki',
                 'source-layer': 'odsek',
                 paint: {
-                    'fill-color': '#FF0000',
+                    'fill-color': '#045010',
                     'fill-color-transition': { duration: 0, delay: 0 },
                     'fill-opacity': 0.45
                 }
