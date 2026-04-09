@@ -3,6 +3,13 @@ const INITIAL_ZOOM = 8;
 const HISTORICAL_MONTHS = 24;
 const TOTAL_MONTHS = 36;
 
+// Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
+const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640 };
+const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450 };
+const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260 };
+
+const ANIM = ANIM_NORMAL;
+
 const DISPLAY_FIELDS = [
     'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
     'katgozd_naziv', 'ohranjen_naziv', 'relief_naziv', 'lega_naziv',
@@ -145,7 +152,7 @@ map.addControl({
         btn.title = 'Ponastavi pogled';
         btn.innerHTML = '⌂';
         btn.addEventListener('click', () => {
-            map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, duration: 900 });
+            map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, duration: ANIM.reset });
         });
         this._container.appendChild(btn);
         return this._container;
@@ -426,7 +433,7 @@ function findBoundsInLoadedTiles(odsekId, ggoCode, ggoName) {
 function fitToBbox(bbox) {
     map.fitBounds(
         [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-        { padding: 70, duration: 1700, maxZoom: 14 }
+        { padding: 70, duration: ANIM.panel, maxZoom: 14 }
     );
 }
 
@@ -476,7 +483,7 @@ async function sweepForOdsekBbox(odsekId, ggoCode, ggoName, animateSweep) {
 
     for (const center of centers) {
         if (animateSweep) {
-            map.easeTo({ center, zoom: INITIAL_ZOOM, duration: 260 });
+            map.easeTo({ center, zoom: INITIAL_ZOOM, duration: ANIM.sweep });
             await waitForMoveEnd(1000);
         } else {
             map.jumpTo({ center, zoom: INITIAL_ZOOM });
@@ -502,7 +509,7 @@ async function locateOdsek(odsekId, ggoCode, ggoName, mode = 'panel') {
     } else {
         map.fitBounds(
             [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-            { padding: 70, duration: 700, maxZoom: 14 }
+            { padding: 70, duration: ANIM.manual, maxZoom: 14 }
         );
     }
 
@@ -699,7 +706,7 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
     setHighlight(cleanId, ggoName);
 
-    const duration = source === 'panel' ? 1700 : 700;
+    const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
 
     // 1. Direct geometry from a map click — use the clicked feature's bbox to fly.
     if (featureGeometry) {
@@ -880,7 +887,7 @@ map.on('click', 'odseki-fill', (event) => {
             setHighlight(clickedOdsek, fallbackGgoName);
             const bbox = getBboxFromGeometry(geometry);
             if (bbox) {
-                map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: 700, maxZoom: 14 });
+                map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: ANIM.manual, maxZoom: 14 });
             }
         }
     });
