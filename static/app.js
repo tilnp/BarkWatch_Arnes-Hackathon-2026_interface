@@ -86,18 +86,7 @@ const map = new maplibregl.Map({
                     'line-opacity': 0.75
                 }
             },
-            {
-                id: 'odseki-selected-outline',
-                type: 'line',
-                source: 'odseki',
-                'source-layer': 'odsek',
-                filter: ['==', ['to-string', ['get', 'odsek']], ''],
-                paint: {
-                    'line-color': '#22d3ee',
-                    'line-width': 3,
-                    'line-opacity': 1
-                }
-            }
+            // NOTE: highlight layer is added dynamically on map load (GeoJSON source)
         ]
     },
     center: SLOVENIA_CENTER,
@@ -219,7 +208,7 @@ function setSearchEnabled(enabled) {
         searchInput.placeholder = 'Najprej izberi GGO';
         searchInput.value = '';
         suggestionsEl.innerHTML = '';
-        setSelectedOdsekFilter('');
+        clearHighlight();
     }
 }
 
@@ -520,26 +509,47 @@ async function fetchOdsekById(odsekId) {
     return response.json();
 }
 
-function setSelectedOdsekFilter(odsekId, ggoName = '') {
-    if (!map.getLayer('odseki-selected-outline')) return;
+let _highlightReqId = 0;
 
-    if (!odsekId) {
-        map.setFilter('odseki-selected-outline', ['literal', false]);
-        return;
-    }
+/** Clear the blue highlight outline. */
+function clearHighlight() {
+    const src = map.getSource('odsek-highlight');
+    if (src) src.setData({ type: 'FeatureCollection', features: [] });
+}
 
-    const odsekFilter = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
+/**
+ * Set highlight geometry directly (e.g. from a clicked tile feature).
+ * Accepts a single GeoJSON geometry object or an array of them.
+ */
+function setHighlightGeometry(geometry) {
+    const src = map.getSource('odsek-highlight');
+    if (!src) return;
+    const geoms = Array.isArray(geometry) ? geometry : [geometry];
+    src.setData({
+        type: 'FeatureCollection',
+        features: geoms.filter(Boolean).map(g => ({ type: 'Feature', geometry: g, properties: {} }))
+    });
+}
 
-    // Tiles contain ggo_naziv — narrow to exactly the one GGO when known.
-    if (ggoName) {
-        map.setFilter('odseki-selected-outline', [
-            'all',
-            odsekFilter,
-            ['==', ['to-string', ['get', 'ggo_naziv']], ggoName]
-        ]);
-    } else {
-        map.setFilter('odseki-selected-outline', odsekFilter);
-    }
+/**
+ * After the map has flown to a bbox, wait for tiles to finish loading then
+ * query the exact polygon geometry from vector tiles and highlight it.
+ */
+function highlightAfterIdle(odsekId, ggoName) {
+    const reqId = ++_highlightReqId;
+    const onIdle = () => {
+        if (reqId !== _highlightReqId) return; // superseded by newer selection
+        const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
+        const matches = features.filter(f => {
+            const p = f.properties || {};
+            return normalize(String(p.odsek || '')) === normalize(odsekId) &&
+                   normalize(String(p.ggo_naziv || '')) === normalize(ggoName);
+        });
+        if (matches.length > 0) {
+            setHighlightGeometry(matches.map(f => f.geometry));
+        }
+    };
+    map.once('idle', onIdle);
 }
 
 /**
@@ -570,16 +580,14 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
         return;
     }
 
-    const ggoCode = String(payload.key?.ggo_code || selectedGgoCode() || '').trim();
-
     selectedOdsekEl.textContent = `Izbran odsek: ${cleanId} | GGO: ${ggoName}`;
     renderDetailsTable(payload.data);
-    setSelectedOdsekFilter(cleanId, ggoName);
 
     const duration = source === 'panel' ? 1700 : 700;
 
-    // 1. Direct geometry from a map click — most accurate, no lookup needed.
+    // 1. Direct geometry from a map click — highlight immediately, then fly.
     if (featureGeometry) {
+        setHighlightGeometry(featureGeometry);
         const bbox = getBboxFromGeometry(featureGeometry);
         if (bbox) {
             map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration, maxZoom: 14 });
@@ -587,17 +595,20 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
         }
     }
 
-    // 2. Bbox pre-computed server-side from tiles at zoom 11 — works for all odseki
-    //    including tiny ones dropped from zoom-8 tiles.
+    // 2. Bbox from server — fly there, then query tile features for exact geometry.
     if (payload.bbox) {
         const b = payload.bbox;
         map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 70, duration, maxZoom: 14 });
+        highlightAfterIdle(cleanId, ggoName);
         return;
     }
 
-    // 3. Fallback: search loaded tiles (may fail for small odseki at low zoom).
+    // 3. Fallback: tile sweep (may miss tiny odseki at zoom 8).
+    const ggoCode = String(payload.key?.ggo_code || selectedGgoCode() || '').trim();
     const moved = await locateOdsek(cleanId, ggoCode, ggoName, source);
-    if (!moved) {
+    if (moved) {
+        highlightAfterIdle(cleanId, ggoName);
+    } else {
         console.warn('Odsek location could not be resolved:', cleanId, ggoName);
     }
 }
@@ -609,7 +620,7 @@ ggoSelect.addEventListener('change', () => {
     // Clear previously selected odsek whenever GGO changes.
     searchInput.value = '';
     suggestionsEl.innerHTML = '';
-    setSelectedOdsekFilter('');
+    clearHighlight();
 
     if (enabled) {
         selectedOdsekEl.textContent = `Izbran GGO: ${selectedGgoName()}`;
@@ -661,6 +672,22 @@ map.on('load', () => {
     map.setMaxBounds(initialBounds);
 
     updateMonthStyle();
+
+    // GeoJSON-based highlight overlay — independent of vector tile loading state.
+    map.addSource('odsek-highlight', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+    });
+    map.addLayer({
+        id: 'odsek-highlight-line',
+        type: 'line',
+        source: 'odsek-highlight',
+        paint: {
+            'line-color': '#2563eb',
+            'line-width': 5,
+            'line-opacity': 1
+        }
+    });
 });
 
 monthSlider.addEventListener('input', updateMonthStyle);
@@ -719,7 +746,7 @@ map.on('click', 'odseki-fill', (event) => {
             searchInput.value = clickedOdsek;
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
             renderDetailsTable(payload.data);
-            setSelectedOdsekFilter(clickedOdsek, fallbackGgoName);
+            setHighlightGeometry(geometry);
             const bbox = getBboxFromGeometry(geometry);
             if (bbox) {
                 map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: 700, maxZoom: 14 });
