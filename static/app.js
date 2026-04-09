@@ -57,6 +57,10 @@ const map = new maplibregl.Map({
                 tiles: [TILE_URL],
                 minzoom: 8,
                 maxzoom: 14
+            },
+            slovenia: {
+                type: 'geojson',
+                data: `${window.location.origin}/slovenia.geojson`
             }
         },
         layers: [
@@ -64,6 +68,17 @@ const map = new maplibregl.Map({
                 id: 'satellite-layer',
                 type: 'raster',
                 source: 'satellite'
+            },
+            {
+                id: 'slovenia-outline',
+                type: 'line',
+                source: 'slovenia',
+                paint: {
+                    'line-color': '#4ade80',
+                    'line-width': 2.5,
+                    'line-opacity': 0.65,
+                    'line-blur': 1.5
+                }
             },
             {
                 id: 'odseki-fill',
