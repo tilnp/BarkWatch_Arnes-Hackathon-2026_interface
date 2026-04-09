@@ -8,7 +8,7 @@ const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640 };
 const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450 };
 const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260 };
 
-const ANIM = ANIM_NORMAL;
+let ANIM = ANIM_NORMAL;
 
 const DISPLAY_FIELDS = [
     'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
@@ -160,7 +160,41 @@ map.addControl({
     onRemove() { this._container.parentNode.removeChild(this._container); }
 }, 'top-right');
 
-// Help control (?)
+// Animation speed control
+const ANIM_PRESETS = [
+    { anim: ANIM_SLOW,   label: '›',   title: 'Počasne animacije' },
+    { anim: ANIM_NORMAL, label: '››',  title: 'Normalne animacije' },
+    { anim: ANIM_FAST,   label: '›››', title: 'Hitre animacije' },
+];
+let _animIdx = ANIM_PRESETS.findIndex(p => p.anim === ANIM);
+if (_animIdx < 0) _animIdx = 1;
+
+map.addControl({
+    onAdd() {
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+        const btn = document.createElement('button');
+        btn.className = 'map-ctrl-btn';
+        btn.style.fontWeight = '700';
+        btn.style.letterSpacing = '-1px';
+        const update = () => {
+            const p = ANIM_PRESETS[_animIdx];
+            btn.innerHTML = p.label;
+            btn.title = p.title;
+        };
+        update();
+        btn.addEventListener('click', () => {
+            _animIdx = (_animIdx + 1) % ANIM_PRESETS.length;
+            ANIM = ANIM_PRESETS[_animIdx].anim;
+            update();
+        });
+        this._container.appendChild(btn);
+        return this._container;
+    },
+    onRemove() { this._container.parentNode.removeChild(this._container); }
+}, 'top-right');
+
+// Help control (?) — added last so it appears at the bottom of the control stack
 const helpModal = document.getElementById('help-modal');
 document.getElementById('help-close').addEventListener('click', () => helpModal.classList.add('hidden'));
 helpModal.addEventListener('click', (e) => { if (e.target === helpModal) helpModal.classList.add('hidden'); });
