@@ -10,13 +10,13 @@ import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-MBTILES_FILE = 'odseki_map_vector.mbtiles'
+MBTILES_FILE = 'odseki_map_vector_final_brezZ.mbtiles'
 PORT = 8000
 
 import csv
 import json
 import mimetypes
-import re
+from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -26,20 +26,241 @@ STATIC_DIR = BASE_DIR / 'static'
 
 # Easy-to-change location and file name for odsek attribute data.
 ODSEKI_DATA_DIR = BASE_DIR / "data"
-ODSEKI_DATA_FILENAME = 'odseki_processed.csv'
+ODSEKI_DATA_FILENAME = 'odseki_nazivi.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
 
 # Easy-to-change list of columns shown in the left panel.
 ODSEKI_FIELDS = [
-    'ggo', 'odsek', 'povrsina', 'relief', 'lega', 'nagib',
-    'kamnina', 'kamnit', 'skalnat', 'negovan', 'pompov',
-    'lzigl', 'lzlst', 'lzsku', 'etigl', 'etlst', 'etsku'
+    'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
+    'katgozd_naziv', 'ohranjen_naziv', 'relief_naziv', 'lega_naziv',
+    'pozar_naziv', 'intgosp_naziv', 'krajime', 'grt1_naziv'
 ]
 
 SUGGESTION_LIMIT = 20
 
-ODSEKI_BY_ID = {}
-ODSEKI_IDS = []
+GGO_FIELD = 'ggo_naziv'
+ODSEK_FIELD = 'odsek'
+
+ODSEKI_BY_KEY = {}
+ODSEKI_BY_ODSEK = defaultdict(list)
+GGO_NAMES = []
+GGO_OPTIONS = []
+
+# (ggo_naziv, odsek) -> [west, south, east, north]  built from mbtiles at zoom 11
+ODSEK_BBOX = {}
+
+
+# ---------------------------------------------------------------------------
+# Minimal MVT (Mapbox Vector Tile) protobuf decoder — no external deps
+# ---------------------------------------------------------------------------
+
+import math
+import gzip as _gzip
+import struct as _struct
+
+
+def _read_varint(data: bytes, pos: int):
+    result = shift = 0
+    while pos < len(data):
+        b = data[pos]; pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, pos
+        shift += 7
+    return result, pos
+
+
+def _zigzag(n: int) -> int:
+    return (n >> 1) ^ -(n & 1)
+
+
+def _unpack_varints(data: bytes):
+    values = []
+    pos = 0
+    while pos < len(data):
+        v, pos = _read_varint(data, pos)
+        values.append(v)
+    return values
+
+
+def _decode_value(data: bytes):
+    pos = 0
+    while pos < len(data):
+        tw, pos = _read_varint(data, pos)
+        fn, wt = tw >> 3, tw & 0x7
+        if wt == 0:
+            v, pos = _read_varint(data, pos)
+            if fn == 4: return v          # int_value
+            if fn == 5: return v          # uint_value
+            if fn == 6: return _zigzag(v) # sint_value
+            if fn == 7: return bool(v)    # bool_value
+        elif wt == 2:
+            l, pos = _read_varint(data, pos)
+            chunk = data[pos:pos + l]; pos += l
+            if fn == 1: return chunk.decode('utf-8', errors='replace')  # string_value
+        elif wt == 1:
+            v = _struct.unpack_from('<d', data, pos)[0]; pos += 8
+            if fn == 3: return v  # double_value
+        elif wt == 5:
+            v = _struct.unpack_from('<f', data, pos)[0]; pos += 4
+            if fn == 2: return v  # float_value
+    return None
+
+
+def _decode_geom_bbox(geom_ints):
+    """Return (min_x, min_y, max_x, max_y) in tile pixel coords, or None."""
+    cx = cy = 0
+    min_x = min_y = float('inf')
+    max_x = max_y = float('-inf')
+    i = 0
+    while i < len(geom_ints):
+        cmd = geom_ints[i]; i += 1
+        cmd_id, count = cmd & 0x7, cmd >> 3
+        if cmd_id == 7:  # ClosePath — no params
+            continue
+        for _ in range(count):
+            if i + 1 >= len(geom_ints): break
+            cx += _zigzag(geom_ints[i]); i += 1
+            cy += _zigzag(geom_ints[i]); i += 1
+            if cx < min_x: min_x = cx
+            if cx > max_x: max_x = cx
+            if cy < min_y: min_y = cy
+            if cy > max_y: max_y = cy
+    if not math.isfinite(min_x):
+        return None
+    return min_x, min_y, max_x, max_y
+
+
+def _decode_layer(data: bytes):
+    """Return (layer_name, list_of_features).
+    Each feature: {'props': dict, 'bbox': (min_x,min_y,max_x,max_y), 'extent': int}
+    """
+    keys, raw_vals, raw_feats = [], [], []
+    name = ''
+    extent = 4096
+    pos = 0
+    while pos < len(data):
+        tw, pos = _read_varint(data, pos)
+        fn, wt = tw >> 3, tw & 0x7
+        if wt == 0:
+            v, pos = _read_varint(data, pos)
+            if fn == 5: extent = v
+        elif wt == 2:
+            l, pos = _read_varint(data, pos)
+            chunk = data[pos:pos + l]; pos += l
+            if fn == 1:   name = chunk.decode('utf-8', errors='replace')
+            elif fn == 2: raw_feats.append(chunk)
+            elif fn == 3: keys.append(chunk.decode('utf-8', errors='replace'))
+            elif fn == 4: raw_vals.append(_decode_value(chunk))
+        elif wt == 1: pos += 8
+        elif wt == 5: pos += 4
+
+    features = []
+    for fd in raw_feats:
+        tags_raw = geom_raw = None
+        fp = 0
+        while fp < len(fd):
+            tw, fp = _read_varint(fd, fp)
+            fn, wt = tw >> 3, tw & 0x7
+            if wt == 0: _, fp = _read_varint(fd, fp)
+            elif wt == 2:
+                l, fp = _read_varint(fd, fp)
+                chunk = fd[fp:fp + l]; fp += l
+                if fn == 2: tags_raw = chunk
+                elif fn == 4: geom_raw = chunk
+            elif wt == 1: fp += 8
+            elif wt == 5: fp += 4
+
+        props = {}
+        if tags_raw:
+            tag_ints = _unpack_varints(tags_raw)
+            for k in range(0, len(tag_ints) - 1, 2):
+                ki, vi = tag_ints[k], tag_ints[k + 1]
+                if ki < len(keys) and vi < len(raw_vals):
+                    props[keys[ki]] = raw_vals[vi]
+
+        bbox = _decode_geom_bbox(_unpack_varints(geom_raw)) if geom_raw else None
+        features.append({'props': props, 'bbox': bbox, 'extent': extent})
+
+    return name, features
+
+
+def _decode_tile(tile_bytes: bytes):
+    """Return list of (layer_name, features)."""
+    if tile_bytes[:2] == b'\x1f\x8b':
+        tile_bytes = _gzip.decompress(tile_bytes)
+    layers = []
+    pos = 0
+    while pos < len(tile_bytes):
+        tw, pos = _read_varint(tile_bytes, pos)
+        fn, wt = tw >> 3, tw & 0x7
+        if wt == 2:
+            l, pos = _read_varint(tile_bytes, pos)
+            chunk = tile_bytes[pos:pos + l]; pos += l
+            if fn == 3:
+                layers.append(_decode_layer(chunk))
+        elif wt == 0: _, pos = _read_varint(tile_bytes, pos)
+        elif wt == 1: pos += 8
+        elif wt == 5: pos += 4
+    return layers
+
+
+def _px_to_geo(z, x_tile, y_tms, px, py, extent):
+    n = 1 << z
+    y_xyz = n - 1 - y_tms
+    lon = (x_tile + px / extent) / n * 360.0 - 180.0
+    lat = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y_xyz + py / extent) / n))))
+    return lon, lat
+
+
+def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
+    """Decode all tiles at *zoom* and return {(ggo_naziv, odsek): [W,S,E,N]}."""
+    index = {}
+    try:
+        conn = sqlite3.connect(mbtiles_file)
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT tile_column, tile_row, tile_data FROM tiles WHERE zoom_level=?',
+            (zoom,)
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        print(f'WARNING: bbox index query failed: {e}')
+        return index
+
+    for x_tile, y_tms, tile_data in rows:
+        if not tile_data:
+            continue
+        try:
+            layers = _decode_tile(bytes(tile_data))
+        except Exception:
+            continue
+        for layer_name, features in layers:
+            if layer_name != 'odsek':
+                continue
+            for feat in features:
+                props = feat['props']
+                raw_bbox = feat['bbox']
+                extent = feat['extent']
+                ggo = str(props.get('ggo_naziv', '')).strip()
+                odsek = str(props.get('odsek', '')).strip()
+                if not ggo or not odsek or raw_bbox is None:
+                    continue
+                mn_x, mn_y, mx_x, mx_y = raw_bbox
+                lon_w, lat_n = _px_to_geo(zoom, x_tile, y_tms, mn_x, mn_y, extent)
+                lon_e, lat_s = _px_to_geo(zoom, x_tile, y_tms, mx_x, mx_y, extent)
+                key = (ggo, odsek)
+                if key not in index:
+                    index[key] = [lon_w, lat_s, lon_e, lat_n]
+                else:
+                    e = index[key]
+                    e[0] = min(e[0], lon_w)
+                    e[1] = min(e[1], lat_s)
+                    e[2] = max(e[2], lon_e)
+                    e[3] = max(e[3], lat_n)
+
+    return index
 
 
 def _configure_csv_field_limit():
@@ -53,37 +274,6 @@ def _configure_csv_field_limit():
             limit = limit // 10
 
 
-def _is_lonlat_bbox(bbox):
-    min_x, min_y, max_x, max_y = bbox
-    return (
-        -180 <= min_x <= 180 and -180 <= max_x <= 180 and
-        -90 <= min_y <= 90 and -90 <= max_y <= 90
-    )
-
-
-def _extract_bbox_and_center_from_wkt(geometry_text):
-    if not geometry_text:
-        return None, None
-
-    nums = [
-        float(v)
-        for v in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', geometry_text)
-    ]
-    if len(nums) < 4:
-        return None, None
-
-    if len(nums) % 2 != 0:
-        nums = nums[:-1]
-    if len(nums) < 4:
-        return None, None
-
-    xs = nums[0::2]
-    ys = nums[1::2]
-    bbox = [min(xs), min(ys), max(xs), max(ys)]
-    center = [(bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0]
-    return bbox, center
-
-
 def _odsek_sort_key(odsek_id):
     try:
         return (0, int(odsek_id))
@@ -91,11 +281,21 @@ def _odsek_sort_key(odsek_id):
         return (1, odsek_id)
 
 
-def load_odseki_data():
-    global ODSEKI_BY_ID, ODSEKI_IDS
+def _extract_ggo_code_from_odsek(odsek_id):
+    odsek_id = (odsek_id or '').strip()
+    if len(odsek_id) < 2:
+        return ''
+    prefix = odsek_id[:2]
+    return prefix if prefix.isdigit() else ''
 
-    ODSEKI_BY_ID = {}
-    ODSEKI_IDS = []
+
+def load_odseki_data():
+    global ODSEKI_BY_KEY, ODSEKI_BY_ODSEK, GGO_NAMES, GGO_OPTIONS
+
+    ODSEKI_BY_KEY = {}
+    ODSEKI_BY_ODSEK = defaultdict(list)
+    GGO_NAMES = []
+    GGO_OPTIONS = []
 
     _configure_csv_field_limit()
 
@@ -104,25 +304,42 @@ def load_odseki_data():
         return
 
     try:
+        ggo_names = set()
+        ggo_name_to_codes = defaultdict(set)
+
         with ODSEKI_DATA_PATH.open('r', encoding='utf-8-sig', newline='') as csv_file:
             reader = csv.DictReader(csv_file)
 
             for row in reader:
-                odsek_id = (row.get('odsek') or '').strip()
-                if not odsek_id:
+                ggo_name = (row.get(GGO_FIELD) or '').strip()
+                odsek_id = (row.get(ODSEK_FIELD) or '').strip()
+                if not ggo_name or not odsek_id:
                     continue
 
-                record = {field: row.get(field, '') for field in ODSEKI_FIELDS}
+                record = {field: (row.get(field) or '').strip() for field in ODSEKI_FIELDS}
+                ggo_code = _extract_ggo_code_from_odsek(odsek_id)
+                record['ggo_code'] = ggo_code
 
-                bbox, center = _extract_bbox_and_center_from_wkt(record.get('geometry', ''))
-                if bbox and _is_lonlat_bbox(bbox):
-                    record['bbox'] = bbox
-                    record['center'] = center
+                key = (ggo_name, odsek_id)
+                ODSEKI_BY_KEY[key] = record
+                ODSEKI_BY_ODSEK[odsek_id].append(record)
+                ggo_names.add(ggo_name)
+                if ggo_code:
+                    ggo_name_to_codes[ggo_name].add(ggo_code)
 
-                ODSEKI_BY_ID[odsek_id] = record
+        GGO_NAMES = sorted(ggo_names)
+        GGO_OPTIONS = [
+            {
+                'ggo_naziv': name,
+                'ggo_code': sorted(ggo_name_to_codes.get(name, {'00'}))[0]
+            }
+            for name in GGO_NAMES
+        ]
 
-        ODSEKI_IDS = sorted(ODSEKI_BY_ID.keys(), key=_odsek_sort_key)
-        print(f"Loaded {len(ODSEKI_IDS)} odseki from {ODSEKI_DATA_PATH.name}")
+        print(
+            f"Loaded {len(ODSEKI_BY_KEY)} odsek records "
+            f"({len(GGO_NAMES)} GGO) from {ODSEKI_DATA_PATH.name}"
+        )
     except Exception as e:
         print(f"WARNING: Failed to load odseki data from {ODSEKI_DATA_PATH}: {e}")
 
@@ -177,20 +394,59 @@ class TileHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        if path == '/api/ggo':
+            self._send_json(200, {
+                'ggo_names': GGO_NAMES,
+                'options': GGO_OPTIONS
+            })
+            return
+
         if path == '/api/odseki/suggest':
-            query = parse_qs(parsed.query).get('q', [''])[0].strip().lower()
-            if not query:
+            query_map = parse_qs(parsed.query)
+            query = query_map.get('q', [''])[0].strip().lower()
+            ggo_name = query_map.get('ggo', [''])[0].strip()
+
+            if not ggo_name or not query:
                 suggestions = []
             else:
                 suggestions = [
                     odsek_id
-                    for odsek_id in ODSEKI_IDS
-                    if query in odsek_id.lower()
-                ][:SUGGESTION_LIMIT]
+                    for (ggo, odsek_id) in ODSEKI_BY_KEY.keys()
+                    if ggo == ggo_name and query in odsek_id.lower()
+                ]
+                suggestions = sorted(set(suggestions), key=_odsek_sort_key)[:SUGGESTION_LIMIT]
 
             self._send_json(200, {
                 'query': query,
+                'ggo': ggo_name,
                 'suggestions': suggestions
+            })
+            return
+
+        if path == '/api/odseki/by-key':
+            query_map = parse_qs(parsed.query)
+            ggo_name = query_map.get('ggo', [''])[0].strip()
+            odsek_id = query_map.get('odsek', [''])[0].strip()
+
+            if not ggo_name or not odsek_id:
+                self._send_json(400, {'error': 'Missing ggo or odsek query parameter'})
+                return
+
+            record = ODSEKI_BY_KEY.get((ggo_name, odsek_id))
+            if not record:
+                self._send_json(404, {'error': f'Odsek {odsek_id} in GGO {ggo_name} not found'})
+                return
+
+            bbox = ODSEK_BBOX.get((ggo_name, odsek_id))
+            self._send_json(200, {
+                'key': {
+                    'ggo_naziv': ggo_name,
+                    'odsek': odsek_id,
+                    'ggo_code': (record.get('ggo_code') or '')
+                },
+                'columns': ODSEKI_FIELDS,
+                'data': record,
+                'bbox': bbox  # [west, south, east, north] or null
             })
             return
 
@@ -200,15 +456,33 @@ class TileHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {'error': 'Missing odsek id'})
                 return
 
-            record = ODSEKI_BY_ID.get(odsek_id)
-            if not record:
+            matches = ODSEKI_BY_ODSEK.get(odsek_id, [])
+            if not matches:
                 self._send_json(404, {'error': f'Odsek {odsek_id} not found'})
+                return
+
+            if len(matches) == 1:
+                record = matches[0]
+                self._send_json(200, {
+                    'odsek': odsek_id,
+                    'columns': ODSEKI_FIELDS,
+                    'data': record,
+                    'ambiguous': False
+                })
                 return
 
             self._send_json(200, {
                 'odsek': odsek_id,
-                'columns': ODSEKI_FIELDS,
-                'data': record
+                'ambiguous': True,
+                'match_count': len(matches),
+                'options': [
+                    {
+                        'ggo_naziv': (r.get('ggo_naziv') or '').strip(),
+                        'odsek': (r.get('odsek') or '').strip(),
+                        'ggo_code': (r.get('ggo_code') or '').strip()
+                    }
+                    for r in matches
+                ]
             })
             return
 
@@ -222,13 +496,15 @@ class TileHandler(BaseHTTPRequestHandler):
                     y_tms = (2 ** z - 1) - y
 
                     conn = sqlite3.connect(MBTILES_FILE)
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
-                        (z, x, y_tms)
-                    )
-                    row = cursor.fetchone()
-                    conn.close()
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
+                            (z, x, y_tms)
+                        )
+                        row = cursor.fetchone()
+                    finally:
+                        conn.close()
 
                     if row:
                         tile_data = row[0]
@@ -238,14 +514,22 @@ class TileHandler(BaseHTTPRequestHandler):
                             self.send_header('Content-Encoding', 'gzip')
                         self.send_header('Access-Control-Allow-Origin', '*')
                         self.end_headers()
-                        self.wfile.write(tile_data)
+                        try:
+                            self.wfile.write(tile_data)
+                        except BrokenPipeError:
+                            return
                     else:
                         self.send_response(204)
                         self.end_headers()
                     return
+                except BrokenPipeError:
+                    return
                 except Exception:
-                    self.send_response(500)
-                    self.end_headers()
+                    try:
+                        self.send_response(500)
+                        self.end_headers()
+                    except BrokenPipeError:
+                        pass
                     return
 
         self._serve_static_file(path)
@@ -262,6 +546,11 @@ def main():
         sys.exit(1)
 
     load_odseki_data()
+
+    global ODSEK_BBOX
+    print("Building odsek bbox index from tiles (zoom 11)...")
+    ODSEK_BBOX = build_odsek_bbox_index(MBTILES_FILE, zoom=11)
+    print(f"Bbox index: {len(ODSEK_BBOX)} odsek entries")
 
     print(f"Serving {MBTILES_FILE}")
     print(f"Serving static files from {STATIC_DIR}")

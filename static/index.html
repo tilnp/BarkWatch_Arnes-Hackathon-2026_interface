@@ -13,14 +13,19 @@
     <aside class="left-panel">
         <div class="panel-header">
             <h1>Odseki</h1>
-            <p class="panel-subtitle">Iskanje in podatki iz odseki_processed.csv</p>
+            <p class="panel-subtitle">Iskanje in podatki iz odseki_nazivi.csv</p>
         </div>
 
         <div class="search-block">
+            <label for="ggo-select">Izberi GGO</label>
+            <select id="ggo-select">
+                <option value="">-- izberi GGO --</option>
+            </select>
+
             <label for="odsek-search">Išči po odsek ID</label>
             <div class="search-row">
-                <input id="odsek-search" type="text" placeholder="npr. 1047" autocomplete="off">
-                <button id="search-btn" type="button">Poišči</button>
+                <input id="odsek-search" type="text" placeholder="Najprej izberi GGO" autocomplete="off" disabled>
+                <button id="search-btn" type="button" disabled>Poišči</button>
             </div>
             <div id="suggestions" class="suggestions"></div>
         </div>
@@ -38,9 +43,9 @@
         <div id="map"></div>
 
         <div class="time-slider-overlay">
-            <div class="time-slider-title">Časovno obdobje (12 mesecev)</div>
+            <div class="time-slider-title">Časovno obdobje (36 mesecev: 24 podatki + 12 napoved)</div>
             <div class="time-slider-row">
-                <input id="month-slider" type="range" min="1" max="12" step="1" value="1">
+                <input id="month-slider" type="range" min="1" max="36" step="1" value="1">
                 <span id="month-label">Mesec 1</span>
             </div>
         </div>

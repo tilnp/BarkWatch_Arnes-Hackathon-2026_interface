@@ -18,8 +18,8 @@ html, body {
 }
 
 .left-panel {
-    width: 360px;
-    min-width: 360px;
+    width: 430px;
+    min-width: 430px;
     height: 100vh;
     overflow-y: auto;
     background: #f8fafc;
@@ -53,6 +53,16 @@ html, body {
     margin-bottom: 8px;
 }
 
+#ggo-select {
+    width: 100%;
+    margin-bottom: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 0.95rem;
+    background: #fff;
+}
+
 .search-row {
     display: flex;
     gap: 8px;
@@ -78,6 +88,14 @@ html, body {
 
 #search-btn:hover {
     background: #1e40af;
+}
+
+#odsek-search:disabled,
+#search-btn:disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
+    border-color: #e2e8f0;
+    cursor: not-allowed;
 }
 
 .suggestions {
@@ -165,7 +183,7 @@ html, body {
     border: 1px solid #dbeafe;
     border-radius: 10px;
     padding: 10px 12px;
-    min-width: 360px;
+    min-width: 560px;
     box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
 }
 
@@ -183,22 +201,57 @@ html, body {
 
 #month-slider {
     flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+    background: #cbd5e1;
+    outline: none;
 }
 
+#month-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 6px rgba(15, 23, 42, 0.3);
+    background: #2563eb;
+    cursor: pointer;
+}
+
+#month-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 6px rgba(15, 23, 42, 0.3);
+    background: #2563eb;
+    cursor: pointer;
+}
+
+#month-slider.slider-historical::-webkit-slider-thumb { background: #2563eb; }
+#month-slider.slider-historical::-moz-range-thumb { background: #2563eb; }
+
+#month-slider.slider-forecast::-webkit-slider-thumb { background: #f97316; }
+#month-slider.slider-forecast::-moz-range-thumb { background: #f97316; }
+
 #month-label {
-    width: 72px;
+    width: 120px;
     text-align: right;
     font-weight: 600;
     color: #0f172a;
+    white-space: nowrap;
 }
 
 @media (max-width: 960px) {
     .left-panel {
-        width: 310px;
-        min-width: 310px;
+        width: 360px;
+        min-width: 360px;
     }
 
     .time-slider-overlay {
-        min-width: 300px;
+        min-width: 420px;
     }
 }

@@ -1,13 +1,15 @@
 const SLOVENIA_CENTER = [14.9955, 46.1512];
 const INITIAL_ZOOM = 8;
+const HISTORICAL_MONTHS = 24;
+const TOTAL_MONTHS = 36;
 
 const DISPLAY_FIELDS = [
-    'ggo', 'odsek', 'povrsina', 'relief', 'lega', 'nagib',
-    'kamnina', 'kamnit', 'skalnat', 'geometry', 'negovan', 'pompov',
-    'lzigl', 'lzlst', 'lzsku', 'etigl', 'etlst', 'etsku'
+    'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
+    'katgozd_naziv', 'ohranjen_naziv', 'relief_naziv', 'lega_naziv',
+    'pozar_naziv', 'intgosp_naziv', 'krajime', 'grt1_naziv'
 ];
 
-const MONTH_PALETTES = [
+const HISTORICAL_MONTH_PALETTES = [
     ['#e11d48', '#fb7185', '#fdba74', '#facc15', '#22c55e'],
     ['#be123c', '#f43f5e', '#f97316', '#a3e635', '#14b8a6'],
     ['#c026d3', '#a855f7', '#6366f1', '#0ea5e9', '#06b6d4'],
@@ -20,6 +22,21 @@ const MONTH_PALETTES = [
     ['#9333ea', '#c084fc', '#38bdf8', '#2dd4bf', '#22c55e'],
     ['#1d4ed8', '#3b82f6', '#0ea5e9', '#14b8a6', '#10b981'],
     ['#334155', '#64748b', '#94a3b8', '#60a5fa', '#a78bfa']
+];
+
+const FORECAST_MONTH_PALETTES = [
+    ['#f97316', '#fb923c', '#fdba74', '#facc15', '#84cc16'],
+    ['#ea580c', '#f97316', '#fb7185', '#f59e0b', '#a3e635'],
+    ['#f43f5e', '#fb7185', '#fdba74', '#f59e0b', '#22c55e'],
+    ['#d946ef', '#f472b6', '#fb7185', '#f97316', '#eab308'],
+    ['#c2410c', '#ea580c', '#f59e0b', '#facc15', '#84cc16'],
+    ['#f97316', '#fb923c', '#fda4af', '#fde68a', '#86efac'],
+    ['#ea580c', '#f97316', '#fb7185', '#fdba74', '#a3e635'],
+    ['#f43f5e', '#fb7185', '#f97316', '#f59e0b', '#84cc16'],
+    ['#d97706', '#f59e0b', '#f97316', '#fb7185', '#f43f5e'],
+    ['#b45309', '#d97706', '#f59e0b', '#facc15', '#4ade80'],
+    ['#c2410c', '#ea580c', '#fb923c', '#fdba74', '#a3e635'],
+    ['#f97316', '#fb923c', '#f59e0b', '#facc15', '#84cc16']
 ];
 
 const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
@@ -92,6 +109,7 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-right');
 
+const ggoSelect = document.getElementById('ggo-select');
 const searchInput = document.getElementById('odsek-search');
 const searchBtn = document.getElementById('search-btn');
 const suggestionsEl = document.getElementById('suggestions');
@@ -100,11 +118,117 @@ const detailsEl = document.getElementById('odsek-details');
 const monthSlider = document.getElementById('month-slider');
 const monthLabel = document.getElementById('month-label');
 
-let currentSuggestions = [];
+monthSlider.max = String(TOTAL_MONTHS);
+
 let suggestionsRequestCounter = 0;
+const ggoCodeByName = new Map();
+const ggoNameByCode = new Map(); // reverse: normalised code → ggo_naziv
+
+// Detected GGO field name inside vector-tile feature properties.
+// null  = not yet probed
+// false = probed but not found
+// string = field name that exists
+let _tileGgoField = null;
+let _tileGgoFieldType = null; // 'code' | 'name'
+
+function normalize(v) {
+    return String(v ?? '').trim();
+}
+
+function normalizeCode(v) {
+    const s = normalize(v);
+    if (!s) return '';
+    return String(parseInt(s, 10)).padStart(2, '0');
+}
+
+function selectedGgoName() {
+    return (ggoSelect.value || '').trim();
+}
+
+function selectedGgoCode() {
+    const name = selectedGgoName();
+    return name ? (ggoCodeByName.get(name) || '') : '';
+}
+
+/**
+ * Try to resolve a GGO name from vector-tile feature properties.
+ * Returns the ggo_naziv string, or null if not determinable.
+ */
+function detectGgoNameFromProps(props) {
+    if (!props) return null;
+
+    const codeKeys = ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code'];
+    for (const key of codeKeys) {
+        if (props[key] !== undefined) {
+            const code = normalizeCode(String(props[key]));
+            const name = ggoNameByCode.get(code);
+            if (name) return name;
+        }
+    }
+
+    const nameKeys = ['ggo_naziv', 'ggo_name'];
+    for (const key of nameKeys) {
+        const val = normalize(props[key]);
+        if (val && ggoCodeByName.has(val)) return val;
+    }
+
+    return null;
+}
+
+/**
+ * Probe which GGO field (if any) exists inside the rendered vector tiles.
+ * Result is cached in _tileGgoField / _tileGgoFieldType.
+ */
+function probeTileGgoField() {
+    if (_tileGgoField !== null) return;
+    if (!map.isStyleLoaded()) return;
+
+    const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
+    if (!features.length) return; // tiles not loaded yet — will retry later
+
+    const sample = features[0].properties || {};
+
+    const codeKeys = ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code'];
+    for (const key of codeKeys) {
+        if (sample[key] !== undefined) {
+            _tileGgoField = key;
+            _tileGgoFieldType = 'code';
+            return;
+        }
+    }
+
+    const nameKeys = ['ggo_naziv', 'ggo_name'];
+    for (const key of nameKeys) {
+        if (sample[key] !== undefined) {
+            _tileGgoField = key;
+            _tileGgoFieldType = 'name';
+            return;
+        }
+    }
+
+    _tileGgoField = false; // tiles carry no GGO info
+}
+
+function setSearchEnabled(enabled) {
+    searchInput.disabled = !enabled;
+    searchBtn.disabled = !enabled;
+
+    if (enabled) {
+        searchInput.placeholder = 'npr. 31001';
+    } else {
+        searchInput.placeholder = 'Najprej izberi GGO';
+        searchInput.value = '';
+        suggestionsEl.innerHTML = '';
+        setSelectedOdsekFilter('');
+    }
+}
 
 function buildColorExpression(monthIndex) {
-    const palette = MONTH_PALETTES[(monthIndex - 1) % MONTH_PALETTES.length];
+    const isForecast = monthIndex > HISTORICAL_MONTHS;
+    const periodMonth = isForecast ? (monthIndex - HISTORICAL_MONTHS) : monthIndex;
+    const palettes = isForecast ? FORECAST_MONTH_PALETTES : HISTORICAL_MONTH_PALETTES;
+    const palette = palettes[(periodMonth - 1) % palettes.length];
+
     return [
         'let', 'bucket', ['%', ['abs', ['to-number', ['get', 'odsek'], 0]], 5],
         [
@@ -120,21 +244,19 @@ function buildColorExpression(monthIndex) {
 
 function updateMonthStyle() {
     const month = Number(monthSlider.value);
-    monthLabel.textContent = `Mesec ${month}`;
+    const isForecast = month > HISTORICAL_MONTHS;
+    const periodMonth = isForecast ? (month - HISTORICAL_MONTHS) : month;
+
+    monthLabel.textContent = isForecast
+        ? `Napoved ${periodMonth}`
+        : `Podatki ${periodMonth}`;
+
+    monthSlider.classList.toggle('slider-forecast', isForecast);
+    monthSlider.classList.toggle('slider-historical', !isForecast);
 
     if (map.getLayer('odseki-fill')) {
         map.setPaintProperty('odseki-fill', 'fill-color', buildColorExpression(month));
     }
-}
-
-function isValidLonLatBbox(bbox) {
-    if (!Array.isArray(bbox) || bbox.length !== 4) return false;
-    return (
-        bbox[0] >= -180 && bbox[0] <= 180 &&
-        bbox[2] >= -180 && bbox[2] <= 180 &&
-        bbox[1] >= -90 && bbox[1] <= 90 &&
-        bbox[3] >= -90 && bbox[3] <= 90
-    );
 }
 
 function coordinatesBbox(coords, acc) {
@@ -155,11 +277,78 @@ function coordinatesBbox(coords, acc) {
     return acc;
 }
 
-function findBoundsInLoadedTiles(odsekId) {
+/** Compute bbox directly from a GeoJSON geometry object. */
+function getBboxFromGeometry(geometry) {
+    if (!geometry?.coordinates) return null;
+    const bbox = coordinatesBbox(geometry.coordinates, [Infinity, Infinity, -Infinity, -Infinity]);
+    return Number.isFinite(bbox[0]) ? bbox : null;
+}
+
+function featureMatchesSelection(feature, odsekId, ggoCode, ggoName, discriminator = null) {
+    const p = feature?.properties || {};
+    const odsekMatches = normalize(p.odsek) === normalize(odsekId);
+    if (!odsekMatches) return false;
+
+    if (discriminator && discriminator.key) {
+        return normalize(p[discriminator.key]) === normalize(discriminator.value);
+    }
+
+    const selectedCode = normalizeCode(ggoCode);
+    const selectedName = normalize(ggoName);
+
+    if (!selectedCode && !selectedName) return true;
+
+    // Check GGO code fields. If the tile HAS such a field, use it definitively.
+    const candidateCodeKeys = ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code'];
+    for (const key of candidateCodeKeys) {
+        if (p[key] !== undefined) {
+            return selectedCode ? normalizeCode(p[key]) === selectedCode : true;
+        }
+    }
+
+    // Check GGO name fields. If the tile HAS such a field, use it definitively.
+    const candidateNameKeys = ['ggo_naziv', 'ggo_name'];
+    for (const key of candidateNameKeys) {
+        if (p[key] !== undefined) {
+            return selectedName ? normalize(p[key]) === selectedName : true;
+        }
+    }
+
+    // Tile carries no GGO field at all — cannot discriminate.
+    return true;
+}
+
+function detectDiscriminator(features, ggoCode, ggoName) {
+    const selectedCode = normalizeCode(ggoCode);
+    const selectedName = normalize(ggoName);
+
+    const codeKeys = ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code'];
+    for (const key of codeKeys) {
+        const hit = features.find((f) => normalizeCode(f?.properties?.[key]) === selectedCode && selectedCode);
+        if (hit) return { key, value: hit.properties[key] };
+    }
+
+    const nameKeys = ['ggo_naziv', 'ggo_name'];
+    for (const key of nameKeys) {
+        const hit = features.find((f) => normalize(f?.properties?.[key]) === selectedName && selectedName);
+        if (hit) return { key, value: hit.properties[key] };
+    }
+
+    return null;
+}
+
+function findBoundsInLoadedTiles(odsekId, ggoCode, ggoName) {
     if (!map.isStyleLoaded()) return null;
 
     const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
-    const found = features.find((feature) => String(feature.properties?.odsek) === String(odsekId));
+    const odsekCandidates = features.filter((feature) => normalize(feature?.properties?.odsek) === normalize(odsekId));
+    if (!odsekCandidates.length) return null;
+
+    const discriminator = detectDiscriminator(odsekCandidates, ggoCode, ggoName);
+    const found = odsekCandidates.find((feature) =>
+        featureMatchesSelection(feature, odsekId, ggoCode, ggoName, discriminator)
+    ) || odsekCandidates[0];
+
     if (!found || !found.geometry) return null;
 
     const bbox = coordinatesBbox(found.geometry.coordinates, [Infinity, Infinity, -Infinity, -Infinity]);
@@ -171,14 +360,87 @@ function findBoundsInLoadedTiles(odsekId) {
 function fitToBbox(bbox) {
     map.fitBounds(
         [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-        { padding: 70, duration: 700 }
+        { padding: 70, duration: 1700, maxZoom: 14 }
     );
 }
 
-function truncateValue(value, maxLen = 180) {
-    const text = String(value ?? '');
-    if (text.length <= maxLen) return text;
-    return `${text.slice(0, maxLen)} ...`;
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForMoveEnd(timeoutMs = 1600) {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            resolve();
+        };
+        const onEnd = () => finish();
+        map.once('moveend', onEnd);
+        setTimeout(() => {
+            map.off('moveend', onEnd);
+            finish();
+        }, timeoutMs);
+    });
+}
+
+async function sweepForOdsekBbox(odsekId, ggoCode, ggoName, animateSweep) {
+    let bbox = findBoundsInLoadedTiles(odsekId, ggoCode, ggoName)
+        || findBoundsInLoadedTiles(odsekId, '', '');
+    if (bbox) return bbox;
+
+    const maxBounds = map.getMaxBounds();
+    const sw = maxBounds ? maxBounds.getSouthWest() : { lng: 12.0, lat: 45.0 };
+    const ne = maxBounds ? maxBounds.getNorthEast() : { lng: 17.4, lat: 47.0 };
+
+    const cols = 5;
+    const rows = 4;
+    const centers = [];
+    for (let r = 0; r < rows; r += 1) {
+        for (let c = 0; c < cols; c += 1) {
+            const tX = (c + 0.5) / cols;
+            const tY = (r + 0.5) / rows;
+            centers.push([
+                sw.lng + (ne.lng - sw.lng) * tX,
+                ne.lat - (ne.lat - sw.lat) * tY
+            ]);
+        }
+    }
+
+    for (const center of centers) {
+        if (animateSweep) {
+            map.easeTo({ center, zoom: INITIAL_ZOOM, duration: 260 });
+            await waitForMoveEnd(1000);
+        } else {
+            map.jumpTo({ center, zoom: INITIAL_ZOOM });
+            await sleep(130);
+        }
+
+        bbox = findBoundsInLoadedTiles(odsekId, ggoCode, ggoName)
+            || findBoundsInLoadedTiles(odsekId, '', '');
+        if (bbox) return bbox;
+    }
+
+    return null;
+}
+
+async function locateOdsek(odsekId, ggoCode, ggoName, mode = 'panel') {
+    const animatePanelSwitch = mode === 'panel';
+
+    let bbox = await sweepForOdsekBbox(odsekId, ggoCode, ggoName, animatePanelSwitch);
+    if (!bbox) return false;
+
+    if (animatePanelSwitch) {
+        fitToBbox(bbox);
+    } else {
+        map.fitBounds(
+            [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
+            { padding: 70, duration: 700, maxZoom: 14 }
+        );
+    }
+
+    return true;
 }
 
 function renderDetailsTable(data) {
@@ -190,8 +452,7 @@ function renderDetailsTable(data) {
 
     const rows = DISPLAY_FIELDS.map((field) => {
         const value = data[field] ?? '';
-        const shown = field === 'geometry' ? truncateValue(value) : String(value);
-        return `<tr><th>${field}</th><td title="${String(value).replace(/"/g, '&quot;')}">${shown || '-'}</td></tr>`;
+        return `<tr><th>${field}</th><td>${String(value) || '-'}</td></tr>`;
     }).join('');
 
     detailsEl.classList.remove('empty');
@@ -199,7 +460,6 @@ function renderDetailsTable(data) {
 }
 
 function renderSuggestions(items) {
-    currentSuggestions = items;
     if (!items.length) {
         suggestionsEl.innerHTML = '';
         return;
@@ -210,9 +470,35 @@ function renderSuggestions(items) {
         .join('');
 }
 
-async function fetchSuggestions(query) {
+async function fetchGgoOptions() {
+    const response = await fetch('/api/ggo');
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    const options = payload.options || [];
+    ggoSelect.innerHTML = '<option value="">-- izberi GGO --</option>';
+
+    ggoCodeByName.clear();
+    ggoNameByCode.clear();
+    for (const item of options) {
+        const name = String(item.ggo_naziv || '').trim();
+        const code = String(item.ggo_code || '').trim();
+        if (!name) continue;
+
+        ggoCodeByName.set(name, code);
+        if (code) ggoNameByCode.set(normalizeCode(code), name);
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        ggoSelect.appendChild(option);
+    }
+}
+
+async function fetchSuggestions(query, ggoName) {
     const requestId = ++suggestionsRequestCounter;
-    const response = await fetch(`/api/odseki/suggest?q=${encodeURIComponent(query)}`);
+    const response = await fetch(
+        `/api/odseki/suggest?q=${encodeURIComponent(query)}&ggo=${encodeURIComponent(ggoName)}`
+    );
     if (!response.ok) return;
     const payload = await response.json();
 
@@ -220,76 +506,154 @@ async function fetchSuggestions(query) {
     renderSuggestions(payload.suggestions || []);
 }
 
-async function fetchOdsek(odsekId) {
+async function fetchOdsekByKey(ggoName, odsekId) {
+    const response = await fetch(
+        `/api/odseki/by-key?ggo=${encodeURIComponent(ggoName)}&odsek=${encodeURIComponent(odsekId)}`
+    );
+    if (!response.ok) return null;
+    return response.json();
+}
+
+async function fetchOdsekById(odsekId) {
     const response = await fetch(`/api/odseki/${encodeURIComponent(odsekId)}`);
     if (!response.ok) return null;
     return response.json();
 }
 
-function setSelectedOdsekFilter(odsekId) {
+function setSelectedOdsekFilter(odsekId, ggoName = '') {
     if (!map.getLayer('odseki-selected-outline')) return;
-    map.setFilter('odseki-selected-outline', ['==', ['to-string', ['get', 'odsek']], String(odsekId)]);
+
+    if (!odsekId) {
+        map.setFilter('odseki-selected-outline', ['literal', false]);
+        return;
+    }
+
+    const odsekFilter = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
+
+    // Tiles contain ggo_naziv — narrow to exactly the one GGO when known.
+    if (ggoName) {
+        map.setFilter('odseki-selected-outline', [
+            'all',
+            odsekFilter,
+            ['==', ['to-string', ['get', 'ggo_naziv']], ggoName]
+        ]);
+    } else {
+        map.setFilter('odseki-selected-outline', odsekFilter);
+    }
 }
 
-async function selectOdsek(odsekId) {
-    if (!odsekId) return;
-
-    const cleanId = String(odsekId).trim();
+/**
+ * @param {string} odsekId
+ * @param {'panel'|'manual'} source
+ * @param {string|null} ggoNameOverride  - GGO name detected from tile props (overrides dropdown)
+ * @param {object|null} featureGeometry  - GeoJSON geometry of the clicked tile feature
+ */
+async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, featureGeometry = null) {
+    const cleanId = String(odsekId || '').trim();
     if (!cleanId) return;
+
+    // Prefer the GGO detected from the tile feature; fall back to the dropdown selection.
+    const ggoName = ggoNameOverride || selectedGgoName();
+    if (!ggoName) {
+        selectedOdsekEl.textContent = 'Najprej izberi GGO.';
+        return;
+    }
 
     searchInput.value = cleanId;
     suggestionsEl.innerHTML = '';
 
-    const payload = await fetchOdsek(cleanId);
+    const payload = await fetchOdsekByKey(ggoName, cleanId);
     if (!payload || !payload.data) {
-        selectedOdsekEl.textContent = `Odsek ${cleanId} ni najden.`;
+        selectedOdsekEl.textContent = `Odsek ${cleanId} v GGO '${ggoName}' ni najden.`;
         detailsEl.classList.add('empty');
         detailsEl.textContent = 'Ni podatkov za izbran odsek.';
         return;
     }
 
-    selectedOdsekEl.textContent = `Izbran odsek: ${cleanId}`;
-    renderDetailsTable(payload.data);
-    setSelectedOdsekFilter(cleanId);
+    const ggoCode = String(payload.key?.ggo_code || selectedGgoCode() || '').trim();
 
-    let moved = false;
-    if (isValidLonLatBbox(payload.data.bbox)) {
-        fitToBbox(payload.data.bbox);
-        moved = true;
+    selectedOdsekEl.textContent = `Izbran odsek: ${cleanId} | GGO: ${ggoName}`;
+    renderDetailsTable(payload.data);
+    setSelectedOdsekFilter(cleanId, ggoName);
+
+    const duration = source === 'panel' ? 1700 : 700;
+
+    // 1. Direct geometry from a map click — most accurate, no lookup needed.
+    if (featureGeometry) {
+        const bbox = getBboxFromGeometry(featureGeometry);
+        if (bbox) {
+            map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration, maxZoom: 14 });
+            return;
+        }
     }
 
+    // 2. Bbox pre-computed server-side from tiles at zoom 11 — works for all odseki
+    //    including tiny ones dropped from zoom-8 tiles.
+    if (payload.bbox) {
+        const b = payload.bbox;
+        map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 70, duration, maxZoom: 14 });
+        return;
+    }
+
+    // 3. Fallback: search loaded tiles (may fail for small odseki at low zoom).
+    const moved = await locateOdsek(cleanId, ggoCode, ggoName, source);
     if (!moved) {
-        const loadedBounds = findBoundsInLoadedTiles(cleanId);
-        if (loadedBounds) {
-            fitToBbox(loadedBounds);
-        }
+        console.warn('Odsek location could not be resolved:', cleanId, ggoName);
     }
 }
 
+ggoSelect.addEventListener('change', () => {
+    const enabled = Boolean(selectedGgoName());
+    setSearchEnabled(enabled);
+
+    // Clear previously selected odsek whenever GGO changes.
+    searchInput.value = '';
+    suggestionsEl.innerHTML = '';
+    setSelectedOdsekFilter('');
+
+    if (enabled) {
+        selectedOdsekEl.textContent = `Izbran GGO: ${selectedGgoName()}`;
+        detailsEl.classList.add('empty');
+        detailsEl.textContent = 'Vnesi odsek in izberi predlog.';
+        searchInput.focus();
+    } else {
+        selectedOdsekEl.textContent = 'Ni izbranega odseka.';
+        detailsEl.classList.add('empty');
+        detailsEl.textContent = 'Najprej izberi GGO, nato odsek.';
+    }
+});
+
 searchInput.addEventListener('input', () => {
+    const ggoName = selectedGgoName();
     const query = searchInput.value.trim();
-    if (query.length < 1) {
+    if (!ggoName || query.length < 1) {
         renderSuggestions([]);
         return;
     }
-    fetchSuggestions(query);
+    fetchSuggestions(query, ggoName);
 });
 
 searchInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
         event.preventDefault();
-        selectOdsek(searchInput.value);
+        selectOdsek(searchInput.value, 'manual').catch((err) => {
+            console.error('selectOdsek failed', err);
+        });
     }
 });
 
 searchBtn.addEventListener('click', () => {
-    selectOdsek(searchInput.value);
+    selectOdsek(searchInput.value, 'manual').catch((err) => {
+        console.error('selectOdsek failed', err);
+    });
 });
 
 suggestionsEl.addEventListener('click', (event) => {
     const button = event.target.closest('.suggestion-item');
     if (!button) return;
-    selectOdsek(button.dataset.odsek);
+    selectOdsek(button.dataset.odsek, 'panel').catch((err) => {
+        console.error('selectOdsek failed', err);
+    });
 });
 
 map.on('load', () => {
@@ -302,9 +666,66 @@ map.on('load', () => {
 monthSlider.addEventListener('input', updateMonthStyle);
 
 map.on('click', 'odseki-fill', (event) => {
-    const props = event.features?.[0]?.properties || {};
+    const feature = event.features?.[0];
+    const props = feature?.properties || {};
     if (!props.odsek) return;
-    selectOdsek(String(props.odsek));
+
+    const clickedOdsek = String(props.odsek);
+    // Geometry of the clicked feature — used for direct map positioning so the map never
+    // flies to a different GGO's odsek that happens to share the same odsek code.
+    const geometry = feature?.geometry || null;
+
+    // 1. Try to determine the GGO directly from the tile feature properties (tiles have ggo_naziv).
+    const detectedGgoName = detectGgoNameFromProps(props);
+
+    if (detectedGgoName) {
+        // Sync the GGO dropdown and search bar to reflect the clicked feature.
+        if (ggoSelect.value !== detectedGgoName && ggoCodeByName.has(detectedGgoName)) {
+            ggoSelect.value = detectedGgoName;
+            setSearchEnabled(true);
+        }
+        selectOdsek(clickedOdsek, 'manual', detectedGgoName, geometry).catch((err) => {
+            console.error('selectOdsek failed', err);
+        });
+        return;
+    }
+
+    // 2. Tiles have no GGO field. If the user has a GGO selected in the dropdown, use it.
+    if (selectedGgoName()) {
+        selectOdsek(clickedOdsek, 'manual', null, geometry).catch((err) => {
+            console.error('selectOdsek failed', err);
+        });
+        return;
+    }
+
+    // 3. No GGO context at all — fall back to the ambiguous lookup.
+    fetchOdsekById(clickedOdsek).then((payload) => {
+        if (!payload) return;
+
+        if (payload.ambiguous) {
+            selectedOdsekEl.textContent = `Odsek ${clickedOdsek} je v več GGO.`;
+            detailsEl.classList.add('empty');
+            detailsEl.textContent = 'Najprej izberi GGO v spustnem meniju, nato išči odsek.';
+            return;
+        }
+
+        if (payload.data) {
+            const fallbackGgoName = String(payload.data.ggo_naziv || '').trim();
+            // Sync dropdown and search bar.
+            if (fallbackGgoName && ggoCodeByName.has(fallbackGgoName)) {
+                ggoSelect.value = fallbackGgoName;
+                setSearchEnabled(true);
+            }
+            searchInput.value = clickedOdsek;
+            selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
+            renderDetailsTable(payload.data);
+            setSelectedOdsekFilter(clickedOdsek, fallbackGgoName);
+            const bbox = getBboxFromGeometry(geometry);
+            if (bbox) {
+                map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: 700, maxZoom: 14 });
+            }
+        }
+    });
 });
 
 map.on('mouseenter', 'odseki-fill', () => {
@@ -314,3 +735,6 @@ map.on('mouseenter', 'odseki-fill', () => {
 map.on('mouseleave', 'odseki-fill', () => {
     map.getCanvas().style.cursor = '';
 });
+
+setSearchEnabled(false);
+fetchGgoOptions();
