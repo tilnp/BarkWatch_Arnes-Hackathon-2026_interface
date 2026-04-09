@@ -653,7 +653,7 @@ let _highlightReqId = 0;
 const NEVER_MATCH = ['==', ['get', 'odsek'], ''];
 
 function _applyFilter(f) {
-    if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
+    //if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
     if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
 }
 
