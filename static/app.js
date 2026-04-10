@@ -1,7 +1,5 @@
 const SLOVENIA_CENTER = [14.9955, 46.1512];
 const INITIAL_ZOOM = 8;
-const HISTORICAL_MONTHS = 24;
-const TOTAL_MONTHS = 36;
 
 // Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
 const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640 };
@@ -31,35 +29,9 @@ const FIELD_LABELS = {
 
 const DISPLAY_FIELDS = Object.keys(FIELD_LABELS);
 
-const HISTORICAL_MONTH_PALETTES = [
-    ['#e11d48', '#fb7185', '#fdba74', '#facc15', '#22c55e'],
-    ['#be123c', '#f43f5e', '#f97316', '#a3e635', '#14b8a6'],
-    ['#c026d3', '#a855f7', '#6366f1', '#0ea5e9', '#06b6d4'],
-    ['#7c3aed', '#8b5cf6', '#3b82f6', '#22d3ee', '#34d399'],
-    ['#2563eb', '#60a5fa', '#38bdf8', '#2dd4bf', '#4ade80'],
-    ['#0f766e', '#14b8a6', '#22c55e', '#84cc16', '#eab308'],
-    ['#15803d', '#4ade80', '#facc15', '#f97316', '#ef4444'],
-    ['#b45309', '#f59e0b', '#f97316', '#fb7185', '#f43f5e'],
-    ['#dc2626', '#ef4444', '#f97316', '#f59e0b', '#84cc16'],
-    ['#9333ea', '#c084fc', '#38bdf8', '#2dd4bf', '#22c55e'],
-    ['#1d4ed8', '#3b82f6', '#0ea5e9', '#14b8a6', '#10b981'],
-    ['#334155', '#64748b', '#94a3b8', '#60a5fa', '#a78bfa']
-];
-
-const FORECAST_MONTH_PALETTES = [
-    ['#f97316', '#fb923c', '#fdba74', '#facc15', '#84cc16'],
-    ['#ea580c', '#f97316', '#fb7185', '#f59e0b', '#a3e635'],
-    ['#f43f5e', '#fb7185', '#fdba74', '#f59e0b', '#22c55e'],
-    ['#d946ef', '#f472b6', '#fb7185', '#f97316', '#eab308'],
-    ['#c2410c', '#ea580c', '#f59e0b', '#facc15', '#84cc16'],
-    ['#f97316', '#fb923c', '#fda4af', '#fde68a', '#86efac'],
-    ['#ea580c', '#f97316', '#fb7185', '#fdba74', '#a3e635'],
-    ['#f43f5e', '#fb7185', '#f97316', '#f59e0b', '#84cc16'],
-    ['#d97706', '#f59e0b', '#f97316', '#fb7185', '#f43f5e'],
-    ['#b45309', '#d97706', '#f59e0b', '#facc15', '#4ade80'],
-    ['#c2410c', '#ea580c', '#fb923c', '#fdba74', '#a3e635'],
-    ['#f97316', '#fb923c', '#f59e0b', '#facc15', '#84cc16']
-];
+// Barvna lestvica za heatmap: bucket 0 (ni aktivnosti) → bucket 4 (visoka aktivnost)
+const HEATMAP_COLORS = ['#22c55e', '#84cc16', '#facc15', '#f97316', '#ef4444'];
+const HEATMAP_DEFAULT_COLOR = '#334155';
 
 const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
 
@@ -241,7 +213,11 @@ const detailsEl = document.getElementById('odsek-details');
 const monthSlider = document.getElementById('month-slider');
 const monthLabel = document.getElementById('month-label');
 
-monthSlider.max = String(TOTAL_MONTHS);
+// Heatmap state (napolni initHeatmap)
+let heatmapMonths = [];
+let forecastStartMonth = '';
+const heatmapCache = new Map();
+const HEATMAP_CACHE_LIMIT = 30;
 
 let suggestionsRequestCounter = 0;
 const ggoCodeByName = new Map();
@@ -346,44 +322,81 @@ function setSearchEnabled(enabled) {
     }
 }
 
-function buildColorExpression(monthIndex) {
-    const isForecast = monthIndex > HISTORICAL_MONTHS;
-    const periodMonth = isForecast ? (monthIndex - HISTORICAL_MONTHS) : monthIndex;
-    const palettes = isForecast ? FORECAST_MONTH_PALETTES : HISTORICAL_MONTH_PALETTES;
-    const palette = palettes[(periodMonth - 1) % palettes.length];
+const SL_MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'avg', 'sep', 'okt', 'nov', 'dec'];
 
-    return [
-        'let', 'bucket', ['%', ['abs', ['to-number', ['get', 'odsek'], 0]], 5],
-        [
-            'match', ['var', 'bucket'],
-            0, palette[0],
-            1, palette[1],
-            2, palette[2],
-            3, palette[3],
-            palette[4]
-        ]
-    ];
+function currentMonthString() {
+    if (!heatmapMonths.length) return '';
+    const idx = Math.max(0, Math.min(Number(monthSlider.value), heatmapMonths.length - 1));
+    return heatmapMonths[idx];
+}
+
+function buildHeatmapExpression(buckets) {
+    // Tiles vsebujejo samo lastnost 'odsek' — ujemamo direktno po odsek_id.
+    const args = ['match', ['to-string', ['get', 'odsek']]];
+    for (const [odsek, bucket] of Object.entries(buckets)) {
+        args.push(odsek, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
+    }
+    args.push(HEATMAP_COLORS[0]); // privzeto: ni aktivnosti
+    return args;
 }
 
 function updateMonthLabel() {
-    const month = Number(monthSlider.value);
-    const isForecast = month > HISTORICAL_MONTHS;
-    const periodMonth = isForecast ? (month - HISTORICAL_MONTHS) : month;
-    monthLabel.textContent = isForecast ? `Napoved ${periodMonth}` : `Podatki ${periodMonth}`;
+    const m = currentMonthString();
+    if (!m) { monthLabel.textContent = '–'; return; }
+    const [year, monthNum] = m.split('-');
+    monthLabel.textContent = `${SL_MONTHS[parseInt(monthNum, 10) - 1] ?? ''} ${year}`;
+    const isForecast = forecastStartMonth ? m >= forecastStartMonth : false;
     monthSlider.classList.toggle('slider-forecast', isForecast);
     monthSlider.classList.toggle('slider-historical', !isForecast);
 }
 
-function applyMonthColor() {
-    const month = Number(monthSlider.value);
+async function applyMonthColor() {
+    const m = currentMonthString();
+    if (!m) return;
+    let buckets = heatmapCache.get(m);
+    if (!buckets) {
+        try {
+            const resp = await fetch(`/api/heatmap?month=${encodeURIComponent(m)}`);
+            if (!resp.ok) return;
+            buckets = await resp.json();
+            if (heatmapCache.size >= HEATMAP_CACHE_LIMIT) {
+                heatmapCache.delete(heatmapCache.keys().next().value);
+            }
+            heatmapCache.set(m, buckets);
+        } catch (e) {
+            console.error('Heatmap fetch failed:', m, e);
+            return;
+        }
+    }
     if (map.getLayer('odseki-fill')) {
-        map.setPaintProperty('odseki-fill', 'fill-color', buildColorExpression(month));
+        map.setPaintProperty('odseki-fill', 'fill-color', buildHeatmapExpression(buckets));
     }
 }
 
-function updateMonthStyle() {
-    updateMonthLabel();
-    applyMonthColor();
+async function initHeatmap() {
+    try {
+        const resp = await fetch('/api/heatmap/meta');
+        if (!resp.ok) return;
+        const meta = await resp.json();
+        heatmapMonths = meta.months || [];
+        forecastStartMonth = meta.forecast_start || '';
+        if (!heatmapMonths.length) return;
+
+        monthSlider.min = '0';
+        monthSlider.max = String(heatmapMonths.length - 1);
+
+        // Privzeto: zadnji mesec pred napovedmi
+        let defaultIdx = heatmapMonths.length - 1;
+        if (forecastStartMonth) {
+            const fIdx = heatmapMonths.indexOf(forecastStartMonth);
+            if (fIdx > 0) defaultIdx = fIdx - 1;
+        }
+        monthSlider.value = String(defaultIdx);
+        updateMonthLabel();
+        await applyMonthColor();
+    } catch (e) {
+        console.error('Heatmap init failed:', e);
+    }
 }
 
 function coordinatesBbox(coords, acc) {
@@ -880,11 +893,22 @@ map.on('load', () => {
     const initialBounds = map.getBounds();
     map.setMaxBounds(initialBounds);
 
-    updateMonthStyle();
+    initHeatmap().catch(console.error);
 });
 
-monthSlider.addEventListener('input', updateMonthLabel);
-monthSlider.addEventListener('change', applyMonthColor);
+let _colorDebounce = null;
+
+monthSlider.addEventListener('input', () => {
+    updateMonthLabel();
+    clearTimeout(_colorDebounce);
+    _colorDebounce = setTimeout(() => applyMonthColor().catch(console.error), 300);
+});
+
+// 'change' se sproži ob spustu miške — takrat posodobimo barve takoj
+monthSlider.addEventListener('change', () => {
+    clearTimeout(_colorDebounce);
+    applyMonthColor().catch(console.error);
+});
 
 map.on('click', 'odseki-fill', (event) => {
     const feature = event.features?.[0];

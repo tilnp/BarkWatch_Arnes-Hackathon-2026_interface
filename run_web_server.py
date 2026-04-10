@@ -29,6 +29,30 @@ ODSEKI_DATA_DIR = BASE_DIR / "data"
 ODSEKI_DATA_FILENAME = 'odseki_nazivi.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
 
+HEATMAP_DATA_PATH = BASE_DIR / 'data' / 'heatmap_sorted.csv'
+
+# ── Preslikava ggo (številka v heatmap.csv) → ggo_naziv (niz v vector tilesih)
+GGO_CODE_TO_NAZIV = {
+    1:  'TOLMIN',
+    2:  'BLED',
+    3:  'KRANJ',
+    4:  'LJUBLJANA',
+    5:  'POSTOJNA',
+    6:  'KOČEVJE',
+    7:  'NOVO MESTO',
+    8:  'BREŽICE',
+    9:  'CELJE',
+    10: 'NAZARJE',
+    11: 'SLOVENJ GRADEC',
+    12: 'MARIBOR',
+    13: 'MURSKA SOBOTA',
+    14: 'SEŽANA',
+}
+
+# ── Heatmap: spremenite FORECAST_START_MONTH, da premaknete mejo med
+#             izmerjenimi podatki in napovedmi. Format: 'YYYY-MM'
+FORECAST_START_MONTH = '2025-01'
+
 # Easy-to-change list of columns shown in the left panel.
 ODSEKI_FIELDS = [
     'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
@@ -48,6 +72,11 @@ GGO_OPTIONS = []
 
 # (ggo_naziv, odsek) -> [west, south, east, north]  built from mbtiles at zoom 11
 ODSEK_BBOX = {}
+
+# Heatmap runtime data (populated by load_heatmap_data)
+HEATMAP_MONTHS = []       # sorted list of 'YYYY-MM' strings
+HEATMAP_NZ_BREAKS = []    # 3 break points for non-zero target buckets (buckets 1–4)
+HEATMAP_BY_MONTH = {}     # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +373,87 @@ def load_odseki_data():
         print(f"WARNING: Failed to load odseki data from {ODSEKI_DATA_PATH}: {e}")
 
 
+def _nz_quantile_breaks(values):
+    """Return 3 break points at 25/50/75 percentiles of non-zero values."""
+    nz = sorted(v for v in values if v > 0)
+    n = len(nz)
+    if n < 3:
+        return [1.0, 10.0, 100.0]
+    return [nz[int(n * 0.25)], nz[int(n * 0.50)], nz[int(n * 0.75)]]
+
+
+def _assign_heatmap_bucket(target, nz_breaks):
+    """Map a target value to bucket 0–4 (0 = no activity, 4 = highest)."""
+    if target <= 0:
+        return 0
+    for i, b in enumerate(nz_breaks):
+        if target <= b:
+            return i + 1
+    return 4
+
+
+def load_heatmap_data():
+    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH
+
+    if not HEATMAP_DATA_PATH.exists():
+        print(f"WARNING: Heatmap data not found: {HEATMAP_DATA_PATH}")
+        return
+
+    print("Loading heatmap data (this may take a moment)...")
+    _configure_csv_field_limit()
+
+    # Vector tiles vsebujejo samo lastnost 'odsek' (brez GGO).
+    # Ker isti odsek_id obstaja v več GGO-jih, za vsak (mesec, odsek_id)
+    # obdržimo MAX target vrednost čez vse GGO-je.
+    raw = defaultdict(lambda: defaultdict(float))  # {month: {odsek_id: max_target}}
+    all_targets = []
+    skipped_ggo = set()
+
+    with HEATMAP_DATA_PATH.open('r', encoding='utf-8', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            month = row.get('leto_mesec', '').strip()
+            odsek = row.get('odsek_id',   '').strip()
+            if not month or not odsek:
+                continue
+            try:
+                ggo_int = int(row.get('ggo', 0))
+                target  = float(row.get('target', 0))
+            except ValueError:
+                continue
+            if ggo_int not in GGO_CODE_TO_NAZIV:
+                skipped_ggo.add(ggo_int)
+                continue
+            if target > raw[month][odsek]:
+                raw[month][odsek] = target
+
+    # Zberemo vse target vrednosti za izračun kvantilov
+    for month_data in raw.values():
+        all_targets.extend(month_data.values())
+
+    if skipped_ggo:
+        print(f"WARNING: Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
+
+    HEATMAP_MONTHS    = sorted(raw.keys())
+    HEATMAP_NZ_BREAKS = _nz_quantile_breaks(all_targets)
+    del all_targets
+
+    HEATMAP_BY_MONTH = {}
+    for month, odsek_targets in raw.items():
+        buckets = {}
+        for odsek, target in odsek_targets.items():
+            b = _assign_heatmap_bucket(target, HEATMAP_NZ_BREAKS)
+            if b > 0:
+                buckets[odsek] = b
+        HEATMAP_BY_MONTH[month] = buckets
+
+    print(
+        f"Heatmap loaded: {len(HEATMAP_MONTHS)} months, "
+        f"{sum(len(v) for v in HEATMAP_BY_MONTH.values())} non-zero entries, "
+        f"breaks={[round(b, 2) for b in HEATMAP_NZ_BREAKS]}"
+    )
+
+
 def _sanitize_static_path(request_path):
     rel = request_path.lstrip('/') or 'index.html'
     full = (STATIC_DIR / rel).resolve()
@@ -448,6 +558,27 @@ class TileHandler(BaseHTTPRequestHandler):
                 'data': record,
                 'bbox': bbox  # [west, south, east, north] or null
             })
+            return
+
+        if path == '/api/heatmap/meta':
+            self._send_json(200, {
+                'months':         HEATMAP_MONTHS,
+                'forecast_start': FORECAST_START_MONTH,
+                'nz_breaks':      HEATMAP_NZ_BREAKS,
+            })
+            return
+
+        if path == '/api/heatmap':
+            query_map = parse_qs(parsed.query)
+            month = query_map.get('month', [''])[0].strip()
+            if not month:
+                self._send_json(400, {'error': 'Missing month parameter'})
+                return
+            buckets = HEATMAP_BY_MONTH.get(month)
+            if buckets is None:
+                self._send_json(404, {'error': f'No heatmap data for {month}'})
+                return
+            self._send_json(200, buckets)
             return
 
         if path.startswith('/api/odseki/'):
@@ -579,6 +710,7 @@ def main():
         sys.exit(1)
 
     load_odseki_data()
+    load_heatmap_data()
 
     global ODSEK_BBOX
     ODSEK_BBOX = _load_or_build_bbox_index(MBTILES_FILE, zoom=11)
