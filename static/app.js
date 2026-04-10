@@ -32,17 +32,14 @@ const DISPLAY_FIELDS = Object.keys(FIELD_LABELS);
 // Prikaz razčlenitve poseka po kategorijah (true) ali samo skupna količina (false)
 const SHOW_ADVANCED_POSEK = false;
 
-// Barvna lestvica za heatmap: bucket 0 (ni aktivnosti) → bucket 4 (visoka aktivnost)
-// Barve so definirane v :root (styles.css) — tukaj jih samo preberemo
-const HEATMAP_COLORS = [0, 1, 2, 3, 4].map(i =>
-    getComputedStyle(document.documentElement).getPropertyValue(`--color-heatmap-${i}`).trim()
-);
-const HEATMAP_DEFAULT_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--color-heatmap-none').trim();
+const HIGHLIGHT_SELECTED_ODSEK_BACKGROUND = false;
 
 const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
 
 // Barve iz CSS spremenljivk — definirane enkrat v :root (styles.css)
 const _css = getComputedStyle(document.documentElement);
+const HEATMAP_COLORS      = [0, 1, 2, 3, 4].map(i => _css.getPropertyValue(`--color-heatmap-${i}`).trim());
+const HEATMAP_DEFAULT_COLOR = _css.getPropertyValue('--color-heatmap-none').trim();
 const COLOR_SLO_OUTLINE   = _css.getPropertyValue('--color-slo-outline').trim();
 const COLOR_GGO_OUTLINE   = _css.getPropertyValue('--color-ggo-outline').trim();
 const COLOR_ODSEKI_FILL   = _css.getPropertyValue('--color-odseki-fill').trim();
@@ -277,13 +274,6 @@ let suggestionsRequestCounter = 0;
 const ggoCodeByName = new Map();
 const ggoNameByCode = new Map(); // reverse: normalised code → ggo_naziv
 
-// Detected GGO field name inside vector-tile feature properties.
-// null  = not yet probed
-// false = probed but not found
-// string = field name that exists
-let _tileGgoField = null;
-let _tileGgoFieldType = null; // 'code' | 'name'
-
 function normalize(v) {
     return String(v ?? '').trim();
 }
@@ -326,40 +316,6 @@ function detectGgoNameFromProps(props) {
     }
 
     return null;
-}
-
-/**
- * Probe which GGO field (if any) exists inside the rendered vector tiles.
- * Result is cached in _tileGgoField / _tileGgoFieldType.
- */
-function probeTileGgoField() {
-    if (_tileGgoField !== null) return;
-    if (!map.isStyleLoaded()) return;
-
-    const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
-    if (!features.length) return; // tiles not loaded yet — will retry later
-
-    const sample = features[0].properties || {};
-
-    const codeKeys = ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code'];
-    for (const key of codeKeys) {
-        if (sample[key] !== undefined) {
-            _tileGgoField = key;
-            _tileGgoFieldType = 'code';
-            return;
-        }
-    }
-
-    const nameKeys = ['ggo_naziv', 'ggo_name'];
-    for (const key of nameKeys) {
-        if (sample[key] !== undefined) {
-            _tileGgoField = key;
-            _tileGgoFieldType = 'name';
-            return;
-        }
-    }
-
-    _tileGgoField = false; // tiles carry no GGO info
 }
 
 function setSearchEnabled(enabled) {
@@ -450,8 +406,7 @@ async function fetchAndShowPosek(odsekId, month) {
 
 function renderPosekInfo(data, month) {
     const [year, mon] = month.split('-');
-    const SL = ['jan','feb','mar','apr','maj','jun','jul','avg','sep','okt','nov','dec'];
-    const label = `${SL[parseInt(mon,10)-1] ?? ''} ${year}`;
+    const label = `${SL_MONTHS[parseInt(mon, 10) - 1] ?? ''} ${year}`;
 
     if (data.total_kubikov === 0) {
         posekInfoEl.classList.remove('hidden');
@@ -769,7 +724,9 @@ let _highlightReqId = 0;
 const NEVER_MATCH = ['==', ['get', 'odsek'], ''];
 
 function _applyFilter(f) {
-    //if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
+    if (HIGHLIGHT_SELECTED_ODSEK_BACKGROUND) {
+        if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
+    }
     if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
 }
 
