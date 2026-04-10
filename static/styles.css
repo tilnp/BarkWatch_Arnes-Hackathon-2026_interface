@@ -413,6 +413,14 @@ html, body {
     border-radius: 50%;
 }
 
+.legend-swatch-line {
+    width: 18px;
+    height: 3px;
+    border-radius: 2px;
+    border: none;
+    align-self: center;
+}
+
 .legend-divider {
     height: 1px;
     background: rgba(203, 213, 225, 0.7);
