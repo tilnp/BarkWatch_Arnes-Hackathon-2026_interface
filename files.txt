@@ -1,11 +1,10 @@
 Data file-i in njihova uporaba
 
 
-data/heatmap_past_data_no_zeros.csv  (generirano iz heatmap_past_data.csv)
-data/heatmap_future_predictions_no_zeros.csv  (generirano iz heatmap_future_predictions.csv)
+data/heatmap_past_data.csv
+data/heatmap_future_predictions.csv
 Stolpci: ggo, odsek_id, leto_mesec, target
 Vrstice z target == 0 so odstranjene (hitrejše nalaganje; ničelne vrednosti so implicitno bucket 0)
-Generiraj z: python scripts/drop_zero_rows.py target heatmap_past_data.csv heatmap_future_predictions.csv
 
 heatmap_past_data: zgodovinski (izmerjeni) podatki — napaja heatmap za pretekle mesece
 heatmap_future_predictions: napovedani podatki — napaja heatmap za prihodnje mesece
@@ -58,11 +57,6 @@ Meja Slovenije
 Servira se na /slo-tiles/{z}/{x}/{y}
 Prikazan kot svetlo modra (#60cdee) obroba — layer slovenija-outline
 Toggle z checkboxom v legendi
-
-
-data/odseki_processed.csv
-Vsebuje surove geometrije + vse numerične atribute odsekov (tarife, lzskdv vrednosti, ...)
-Ni direktno v uporabi v spletnem serverju — verjetno vhodni file za generiranje .mbtiles in odseki_nazivi.csv (preprocessing)
 
 
 scripts/drop_zero_rows.py
