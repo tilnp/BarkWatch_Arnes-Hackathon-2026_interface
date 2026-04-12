@@ -212,7 +212,9 @@ map.addControl({
         btn.title = 'Ponastavi pogled';
         btn.innerHTML = '⌂';
         btn.addEventListener('click', () => {
-            clearHighlight();
+            resetPanel();
+            _updateZoomVisibility(INITIAL_ZOOM);   // pre-apply GGE view so tiles load during flight
+            applyMonthColor().catch(console.error); // refresh colors for GGE layer immediately
             map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, bearing: 0, pitch: 0, duration: ANIM.reset });
         });
         this._container.appendChild(btn);
@@ -804,13 +806,26 @@ function clearGgeHighlight() {
     setGgeHighlight(null);
 }
 
-/** Clear the highlight layers. */
+/** Clear the highlight layers and side-panel odsek info. */
 function clearHighlight() {
     ++_highlightReqId;
     _applyFilter(NEVER_MATCH);
     clearGgeHighlight();
     selectedOdsekId = '';
     heatmapInfoEl.classList.add('hidden');
+    selectedOdsekEl.textContent = 'Ni izbranega odseka.';
+    detailsEl.classList.add('empty');
+    detailsEl.textContent = 'Najprej izberi GGO, nato odsek.';
+}
+
+/** Reset the full left panel: GGO dropdown, search field, and odsek info. */
+function resetPanel() {
+    clearHighlight();
+    ggoSelect.value = '';
+    setSearchEnabled(false);
+    selectedOdsekEl.textContent = 'Ni izbranega odseka.';
+    detailsEl.classList.add('empty');
+    detailsEl.textContent = 'Najprej izberi GGO, nato odsek.';
 }
 
 /**
@@ -914,6 +929,9 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     setGgeHighlight(String(payload.data.gge_naziv || '').trim());
 
     const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
+
+    // Pre-apply odsek view immediately so tiles start loading during the flight animation.
+    _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
 
     // 1. Query all tile pieces of this odsek to get the true combined bbox.
     {
@@ -1047,8 +1065,10 @@ map.on('load', () => {
     initHeatmap().catch(console.error);
 });
 
-function _updateZoomVisibility() {
-    const zoom = map.getZoom();
+// Pass targetZoom to pre-apply visibility before an animation starts so tiles load
+// during the flight. Called without argument from the zoomend handler to correct any mismatch.
+function _updateZoomVisibility(targetZoom) {
+    const zoom = targetZoom ?? map.getZoom();
     const showGGE = zoom < GGE_TO_ODSEK_ZOOM;
     if (map.getLayer('gge-fill')) {
         map.setLayoutProperty('gge-fill', 'visibility', showGGE ? 'visible' : 'none');
@@ -1059,7 +1079,7 @@ function _updateZoomVisibility() {
     }
 }
 
-map.on('zoomend', _updateZoomVisibility);
+map.on('zoomend', () => _updateZoomVisibility());
 
 let _colorDebounce = null;
 
@@ -1093,7 +1113,9 @@ map.on('click', 'gge-fill', (event) => {
     if (!feature) return;
     const ggeName = String(feature?.properties?.gge_naziv || '').trim();
     if (!ggeName) return;
+    clearHighlight();
     setGgeHighlight(ggeName);
+    applyMonthColor().catch(console.error);
 
     // Query ALL tile pieces of this GGE across the full source to get the true combined bbox.
     const allFeatures = map.querySourceFeatures('gge', {
@@ -1108,7 +1130,15 @@ map.on('click', 'gge-fill', (event) => {
                 Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])];
     }
     if (!Number.isFinite(bbox[0])) return;
-    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: ANIM.manual, maxZoom: GGE_TO_ODSEK_ZOOM });
+
+    // Use cameraForBounds to get the exact zoom, then clamp to GGE_TO_ODSEK_ZOOM so we always
+    // land at odsek zoom even for large GGEs. flyTo with an explicit zoom avoids the ambiguity
+    // of fitBounds minZoom which may not reliably override the computed zoom.
+    const bounds = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]];
+    const cam = map.cameraForBounds(bounds, { padding: 50, maxZoom: 14 });
+    const targetZoom = Math.max((cam?.zoom ?? GGE_TO_ODSEK_ZOOM), GGE_TO_ODSEK_ZOOM);
+    _updateZoomVisibility(targetZoom);
+    map.flyTo({ center: cam?.center ?? [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2], zoom: targetZoom, duration: ANIM.manual });
 });
 
 map.on('click', 'odseki-fill', (event) => {
@@ -1165,6 +1195,7 @@ map.on('click', 'odseki-fill', (event) => {
             renderDetailsTable(payload.data);
             fetchAndShowHeatmapValue(clickedOdsek, currentMonthString(), fallbackGgoName).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);
+            _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
             {
                 const allFeatures = map.querySourceFeatures('odseki', {
                     sourceLayer: 'odseki_map_ggo_gge',
