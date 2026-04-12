@@ -858,7 +858,7 @@ function clearHighlight() {
     heatmapInfoEl.classList.add('hidden');
     selectedOdsekEl.textContent = 'Ni izbranega odseka.';
     detailsEl.classList.add('empty');
-    detailsEl.textContent = 'Najprej izberi GGO, nato odsek.';
+    detailsEl.textContent = '-';
 }
 
 /** Reset the full left panel: GGO dropdown, search field, and odsek info. */
@@ -868,7 +868,7 @@ function resetPanel() {
     setSearchEnabled(false);
     selectedOdsekEl.textContent = 'Ni izbranega odseka.';
     detailsEl.classList.add('empty');
-    detailsEl.textContent = 'Najprej izberi GGO, nato odsek.';
+    detailsEl.textContent = '-';
 }
 
 /**
@@ -1031,12 +1031,12 @@ ggoSelect.addEventListener('change', () => {
     if (enabled) {
         selectedOdsekEl.textContent = `Izbran GGO: ${selectedGgoName()}`;
         detailsEl.classList.add('empty');
-        detailsEl.textContent = 'Vnesi odsek in izberi predlog.';
+        detailsEl.textContent = 'Izberi odsek.';
         searchInput.focus();
     } else {
         selectedOdsekEl.textContent = 'Ni izbranega odseka.';
         detailsEl.classList.add('empty');
-        detailsEl.textContent = 'Najprej izberi GGO, nato odsek.';
+        detailsEl.textContent = '-';
     }
 });
 
@@ -1182,7 +1182,7 @@ map.on('click', 'gge-fill', (event) => {
                 setSearchEnabled(true);
                 selectedOdsekEl.textContent = `Izbran GGO: ${ggoName}`;
                 detailsEl.classList.add('empty');
-                detailsEl.textContent = 'Vnesi odsek in izberi predlog.';
+                detailsEl.textContent = 'Izberi odsek.';
             }
         })
         .catch(() => {});
