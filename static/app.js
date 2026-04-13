@@ -320,7 +320,7 @@ const ggoSelect = (() => {
     const trigger  = document.getElementById('ggo-select-trigger');
     const display  = document.getElementById('ggo-select-display');
     const list     = document.getElementById('ggo-select-list');
-    const PLACEHOLDER = '-- izberi GGO --';
+    const PLACEHOLDER = '-- izberite GGO --';
 
     let _value = '';
     const _changeListeners = [];
@@ -564,7 +564,7 @@ function setSearchEnabled(enabled) {
     if (enabled) {
         searchInput.placeholder = 'npr. 31001';
     } else {
-        searchInput.placeholder = 'Najprej izberi GGO';
+        searchInput.placeholder = 'Najprej izberite GGO';
         searchInput.value = '';
         suggestionsEl.innerHTML = '';
         clearHighlight();
@@ -1104,7 +1104,7 @@ async function fetchGgoOptions() {
 
     const payload = await response.json();
     const options = payload.options || [];
-    ggoSelect.innerHTML = '<option value="">-- izberi GGO --</option>';
+    ggoSelect.innerHTML = '<option value="">-- izberite GGO --</option>';
 
     ggoCodeByName.clear();
     ggoNameByCode.clear();
@@ -1283,7 +1283,7 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     // Prefer the GGO detected from the tile feature; fall back to the dropdown selection.
     const ggoName = ggoNameOverride || selectedGgoName();
     if (!ggoName) {
-        selectedOdsekEl.textContent = 'Najprej izberi GGO.';
+        selectedOdsekEl.textContent = 'Najprej izberite GGO.';
         return;
     }
 
@@ -1368,7 +1368,7 @@ ggoSelect.addEventListener('change', () => {
     if (enabled) {
         selectedOdsekEl.textContent = `Izbran GGO: ${selectedGgoName()}`;
         detailsEl.classList.add('empty');
-        detailsEl.textContent = 'Izberi odsek.';
+        detailsEl.textContent = 'Izberite odsek.';
         searchInput.focus();
     } else {
         selectedOdsekEl.textContent = 'Ni izbranega odseka.';
@@ -1524,7 +1524,7 @@ map.on('click', 'gge-fill', (event) => {
         setSearchEnabled(true);
         selectedOdsekEl.textContent = `Izbran GGO: ${ggoName}`;
         detailsEl.classList.add('empty');
-        detailsEl.textContent = 'Izberi odsek.';
+        detailsEl.textContent = 'Izberite odsek.';
     }
 
     applyMonthColor().catch(console.error);
@@ -1602,7 +1602,7 @@ map.on('click', 'odseki-fill', (event) => {
         if (payload.ambiguous) {
             selectedOdsekEl.textContent = `Odsek ${clickedOdsek} je v več GGO.`;
             detailsEl.classList.add('empty');
-            detailsEl.textContent = 'Najprej izberi GGO v spustnem meniju, nato išči odsek.';
+            detailsEl.textContent = 'Najprej izberite GGO v spustnem meniju, nato išči odsek.';
             return;
         }
 

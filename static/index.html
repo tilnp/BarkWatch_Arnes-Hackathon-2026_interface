@@ -24,11 +24,11 @@
             </div>
 
             <div class="search-block">
-                <label id="ggo-select-label-el">Izberi Gozdnogospodarsko območje</label>
+                <label id="ggo-select-label-el">Izberite Gozdnogospodarsko območje</label>
                 <div id="ggo-select-custom" class="ggo-custom-select" aria-labelledby="ggo-select-label-el">
                     <button type="button" id="ggo-select-trigger" class="ggo-select-trigger ggo-placeholder"
                             aria-haspopup="listbox" aria-expanded="false">
-                        <span id="ggo-select-display">-- izberi GGO --</span>
+                        <span id="ggo-select-display">-- izberite GGO --</span>
                         <span class="ggo-select-arrow" aria-hidden="true"></span>
                     </button>
                     <div id="ggo-select-list" class="ggo-select-list" role="listbox" hidden></div>
@@ -36,7 +36,7 @@
 
                 <label for="odsek-search">Išči po odsek ID</label>
                 <div class="search-row">
-                    <input id="odsek-search" type="text" placeholder="Najprej izberi GGO" autocomplete="off" disabled>
+                    <input id="odsek-search" type="text" placeholder="Najprej izberite GGO" autocomplete="off" disabled>
                     <button id="search-btn" type="button" disabled>Poišči</button>
                 </div>
                 <div id="suggestions" class="suggestions"></div>
@@ -47,7 +47,7 @@
                 <div id="selected-odsek" class="selected-odsek">Ni izbranega odseka.</div>
                 <div id="posek-info" class="posek-info hidden"></div>
                 <div id="odsek-details" class="odsek-details empty">
-                    Izberi odsek na karti ali preko iskalnika.
+                    Izberite odsek na karti ali preko iskalnika.
                 </div>
             </div>
         </div>
@@ -131,18 +131,84 @@
     </main>
 </div>
 
-<div id="help-modal" class="help-modal hidden" role="dialog" aria-modal="true" aria-label="Navodila za uporabo">
+<div id="help-modal" class="help-modal hidden" role="dialog" aria-modal="true" aria-label="Pomoč">
     <div class="help-modal-box">
-        <button id="help-close" class="help-close" aria-label="Zapri">&times;</button>
-        <h2>Navodila za uporabo</h2>
-        <ol>
-            <li><strong>Izberi GGO</strong> – iz spustnega menija izberi gozdnogospodarsko območje.</li>
-            <li><strong>Poišči odsek</strong> – v iskalno polje vnesi ID odseka in izberi predlog, ali pritisni Enter. Odsek lahko izbereš tudi s klikom na karto.</li>
-            <li><strong>Časovno obdobje</strong> – z drsnikom na vrhu strani nastavi mesec prikaza.</li>
-            <li><strong>Barve na karti</strong> – odražajo intenzivnost aktivnosti lubadarja za izbrano obdobje.</li>
-            <li><strong>Ponastavitev pogleda</strong> – gumb ⌂ (desno zgoraj) ponastavi pogled na celotno Slovenijo.</li>
-            <li><strong>Hitrost animacij</strong> – gumb ›/››/››› preklopi hitrost premikanja kamere: › počasno, ›› normalno, ››› hitro.</li>
-        </ol>
+        <div class="help-modal-header">
+            <h2 class="help-modal-title">Pomoč — BarkWatch Slovenija</h2>
+            <button id="help-close" class="help-close" aria-label="Zapri">&times;</button>
+        </div>
+
+        <div class="help-modal-body">
+
+            <div class="help-section">
+                <div>
+                    <h3 class="help-section-title">Enote</h3>
+                    <ul class="help-list">
+                        <li><strong>GGO (Gozdnogospodarsko območje)</strong> – največja enota. Slovenija je razdeljena na 14 GGO (npr. Ljubljana, Maribor, Tolmin …). Vsak GGO pokriva večjo regijo.</li>
+                        <li><strong>GGE (Gozdnogospodarska enota)</strong> – manjša enota znotraj GGO. Vsak GGO vsebuje več GGE.</li>
+                        <li><strong>Odsek</strong> – najmanjša enota. Vsak odsek znotraj GGO ima svojo ID številko in pokriva manjši del gozda. Podatki o poseku so na voljo za vsak odsek posebej.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="help-divider"></div>
+
+            <div class="help-section">
+                <div>
+                    <h3 class="help-section-title">Kako poiščem določen odsek?</h3>
+                    <ol class="help-list">
+                        <li>V levem panelu iz spustnega menija <strong>izberite GGO</strong> (gozdnogospodarsko območje), v katerem leži odsek.</li>
+                        <li>V iskalno polje <strong>vpišite ID odseka</strong> (npr. <code>10002</code>) in pritisnite gumb <strong>Poišči</strong> ali tipko <strong>Enter</strong>.</li>
+                        <li>Karta se samodejno <strong>premakne in poveča</strong> na izbrani odsek, ki se označi z modro mejo.</li>
+                    </ol>
+                    <p class="help-note">Odsek lahko poiščete tudi tako, da na karti najprej izberete GGE, v katerem se nahaja iskani odsek, kar pobliža pogled in omogoča izbiro odseka.<p>
+                </div>
+            </div>
+
+            <div class="help-divider"></div>
+
+            <div class="help-section">
+                <div>
+                    <h3 class="help-section-title">Podatki o poseku</h3>
+                    <p><strong>Posek</strong> je količina posekanega lesa v določenem obdobju. Ko izberete odsek, se v levem panelu prikažeta:</p>
+                    <ul class="help-list">
+                        <li><strong>Skupni posek (m³)</strong> — absolutna količina posekanega lesa v izbranem mesecu.</li>
+                        <li><strong>Relativni posek (m³/ha)</strong> — količina posekanega lesa glede na površino odseka.</li>
+                    </ul>
+                    <p>S klikom na gumb <strong>„Analiziraj"</strong> se odpre graf, ki prikazuje posek za vsak mesec skozi celotno obdobje.</p>
+                    <p class="help-note">Graf zaprete s klikom na <strong>×</strong>, tipko <strong>Esc</strong> ali klikom zunaj okna.</p>
+                </div>
+            </div>
+
+            <div class="help-divider"></div>
+
+            <div class="help-section">
+                <div>
+                    <h3 class="help-section-title">Časovno obdobje</h3>
+                    <p>Na vrhu karte je drsnik za izbiro meseca prikaza. Premikajte ga levo ali desno, da spremenite obdobje. Uporabite lahko tudi puščici <strong>‹</strong> in <strong>›</strong> za premik za en mesec naenkrat.</p>
+                    <ul class="help-list">
+                        <li><span style="color:#166534;font-weight:700;">●</span> <strong>Zelena pika</strong> na drsniku — prikazani so izmerjeni podatki.</li>
+                        <li><span style="color:#f97316;font-weight:700;">●</span> <strong>Oranžna pika</strong> — prikazane so napovedi za prihodnost.</li>
+                    </ul>
+                    <p><strong>Pravi podatki / Sintetični podatki</strong> — preklopite med prikazom izmerjenih in sintetičnih podatkov.</p>
+                </div>
+            </div>
+
+            <div class="help-divider"></div>
+
+            <div class="help-section">
+                <div>
+                    <h3 class="help-section-title">Gumbi in orodja</h3>
+                    <ul class="help-list">
+                        <li><strong>+ / −</strong> — poveča ali pomanjša karto.</li>
+                        <li><strong>⌂ (Domov)</strong> — ponastavi pogled na celotno Slovenijo.</li>
+                        <li><strong>›&nbsp;/&nbsp;››&nbsp;/&nbsp;›››</strong> — preklopi hitrost animacij (počasno / normalno / hitro).</li>
+                        <li><strong>Legenda</strong> — prikaže razlago barv in omogoča vklop/izklop prikazovanja mej Slovenije in GGO.</li>
+                    </ul>
+                </div>
+            </div>
+
+        </div>
     </div>
 </div>
 
