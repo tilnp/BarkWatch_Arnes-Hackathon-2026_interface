@@ -32,6 +32,13 @@ html, body {
     color: #0f172a;
 }
 
+.panel-logo {
+    width: auto;
+    height: 1em;
+    display: block;
+    object-fit: contain;
+}
+
 .app-shell {
     display: flex;
     width: 100%;
@@ -68,8 +75,19 @@ html, body {
 
 .panel-header h1 {
     margin: 0;
-    font-size: 1.3rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.7rem;
+    line-height: 1;
 }
+
+.panel-header h1 .brand {
+    display: inline-flex;
+    gap: 0;
+}
+
+h1 .watch { color: #166534; }
 
 .panel-subtitle {
     margin: 6px 0 0 0;

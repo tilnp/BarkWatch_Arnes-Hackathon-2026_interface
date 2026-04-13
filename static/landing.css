@@ -62,15 +62,27 @@ body {
   padding: 40px 48px 36px;
 }
 
+.panel-logo {
+  width: 90px;
+  height: 90px;
+  object-fit: contain;
+}
+
 .card-cta {
   padding: 20px 48px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 10px;
 }
 
 /* ─── Title ─────────────────────────────────────────────────── */
 h1 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   font-size: clamp(48px, 9vw, 80px);
   font-weight: 800;
   letter-spacing: -0.04em;
@@ -89,41 +101,27 @@ h1 .watch { color: #166534; }
   margin: 18px auto 28px;
 }
 
-/* ─── Placeholder blocks ─────────────────────────────────────── */
-.placeholders {
+.barkwatch-text {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
 }
 
-.placeholder-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.text-block {
+  padding: 10px 12px;
+  border-left: 3px solid #bbf7d0;
+  background: #f8faf8;
+  border-radius: 8px;
 }
 
-.ph-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.ph-line {
-  height: 12px;
-  background: #d1d9d1;
-  border-radius: 3px;
-}
-.ph-line.long  { width: 100%; }
-.ph-line.mid   { width: 70%; }
-.ph-line.short { width: 46%; }
-
-.ph-label {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #94a3b8;
+.tb-label {
+  display: block;
+  font-size: 1rem;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: #334155;
   font-weight: 500;
-  margin-top: 2px;
 }
 
 /* ─── CTA button ─────────────────────────────────────────────── */
@@ -150,17 +148,18 @@ h1 .watch { color: #166534; }
   display: inline-block;
 }
 
-.cta-btn:hover { background: #f1f5f1; border-color: #166534; }
+.cta-btn:hover { color: #ffffff; background: #166534; }
 .cta-btn:hover .arrow { transform: translateX(3px); }
 .cta-btn:active { background: #e8f0e8; }
 
-/* ─── Footer ────────────────────────────────────────────────── */
-footer {
-  padding: 14px 28px 18px;
-  border-top: 1px solid #d1d9d1;
-  text-align: center;
+.cta-meta {
   font-size: 0.75rem;
   color: #94a3b8;
+  text-align: center;
+}
+
+.card-main .cta-meta {
+  margin-top: 24px;
 }
 
 /* ─── Responsive ─────────────────────────────────────────────── */

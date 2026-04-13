@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BarkWatch</title>
+  <link rel="icon" type="image/png" href="/logo_transparent.png">
   <link rel="stylesheet" href="/landing.css">
 </head>
 <body>
@@ -20,51 +21,37 @@
 
       <!-- title + placeholders -->
       <div class="card card-main">
-        <h1><span class="bark">Bark</span><span class="watch">Watch</span></h1>
+        <h1>
+          <img src="/logo_transparent.png" alt="BarkWatch logo" class="panel-logo">
+          <span class="bark">Bark</span><span class="watch">Watch</span>
+        </h1>
         <div class="title-rule"></div>
 
-        <div class="placeholders">
-          <div class="placeholder-block">
-            <div class="ph-lines">
-              <div class="ph-line long"></div>
-              <div class="ph-line mid"></div>
-              <div class="ph-line short"></div>
-            </div>
-            <span class="ph-label">Placeholder — primary description</span>
+        <div class="barkwatch-text">
+          <div class="text-block">
+            <span class="tb-label">Gozdovi pokrivajo kar 58 % Slovenije, kar jo uvršča med najbolj gozdnate države v Evropi.</span>
           </div>
 
-          <div class="placeholder-block">
-            <div class="ph-lines">
-              <div class="ph-line long"></div>
-              <div class="ph-line mid"></div>
-            </div>
-            <span class="ph-label">Placeholder — secondary description</span>
+          <div class="text-block">
+            <span class="tb-label">Podlubniki predstavljajo eno najresnejših groženj gozdu. Nepravočasno ukrepanje lahko povzroči ogromno škodo.</span>
           </div>
 
-          <div class="placeholder-block">
-            <div class="ph-lines">
-              <div class="ph-line long"></div>
-              <div class="ph-line mid"></div>
-              <div class="ph-line short"></div>
-            </div>
-            <span class="ph-label">Placeholder — data / methodology note</span>
+          <div class="text-block">
+            <span class="tb-label">Zato predstavljamo BarkWatch - napoved dejavnosti podlubnikov na podlagi poseka gozdov - s pomočjo umetne inteligence.</span>
           </div>
         </div>
+        <div class="cta-meta">ekipa Koro&scaron;ci+Tilen &mdash; Arnes Hackathon 2026</div>
       </div>
 
       <!-- Open Map button box -->
       <div class="card card-cta">
         <a href="/index.html" class="cta-btn">
-          Open Map <span class="arrow">→</span>
+          Odpri zemljevid <span class="arrow">→</span>
         </a>
       </div>
 
     </div>
   </div>
-
-  <footer>
-    Koro&scaron;ci+Tilen &mdash; Arnes Hackathon 2026
-  </footer>
 
   <script>
     document.querySelector('.cta-btn').addEventListener('click', function (e) {
