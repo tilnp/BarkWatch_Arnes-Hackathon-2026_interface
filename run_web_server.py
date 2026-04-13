@@ -778,7 +778,7 @@ def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
             abs_month[odsek] = round(rel * p if p > 0 else rel, 2)
         abs_by_month[month] = abs_month
 
-    if raw_breaks is None:
+    else:
         nz_breaks = list(HEATMAP_BREAKS)
         by_month = {}
         for month, odsek_targets in raw.items():
