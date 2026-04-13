@@ -85,12 +85,14 @@ GGE_HEATMAP_BREAKS = [0.02, 0.03, 0.12]
 
 # Bucket break points for SYNTHETIC odsek-level coloring.
 # Applied to the raw target value (m³/month, not normalised by odsek area).
-# Derived from Q25/Q50/Q75 of all non-zero synthetic target values.
-HEATMAP_BREAKS_SYN = [900, 3000, 9000]
+# Actual quartiles of all non-zero synthetic target values (n=2 749 231):
+#   Q25 = 224   Q50 = 1 479   Q75 = 6 104   Q90 = 9 279   Q95 = 10 410   max = 14 868
+HEATMAP_BREAKS_SYN = [1300, 3000, 8500]
 
 # Bucket break points for SYNTHETIC GGE-level coloring.
 # Applied to the raw summed target per GGE per month (m³/month, not normalised by GGE area).
-# Derived from Q25/Q50/Q75 of all non-zero synthetic GGE monthly sums.
+# Actual quartiles of all non-zero synthetic GGE monthly sums (n=37 678):
+#   Q25 = 11 736   Q50 = 55 483   Q75 = 204 316   Q90 = 500 904   Q95 = 746 664   max = 1 951 692
 GGE_HEATMAP_BREAKS_SYN = [50000, 300000, 600000]
 
 
@@ -745,8 +747,13 @@ def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
     if skipped_ggo:
         print(f"WARNING ({label}): Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
 
+    # Will be populated by exactly one of the two branches below.
+    nz_breaks: list = []
+    by_month: dict = {}
+
+    # Bucket from raw (pre-area-normalisation) values when explicit breaks are given.
+    # Must happen before the in-place normalisation below.
     if raw_breaks is not None:
-        # Bucket from raw (pre-area-normalisation) values using the provided breaks.
         nz_breaks = list(raw_breaks)
         by_month = {}
         for month, odsek_targets in raw.items():
@@ -778,7 +785,9 @@ def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
             abs_month[odsek] = round(rel * p if p > 0 else rel, 2)
         abs_by_month[month] = abs_month
 
-    else:
+    # Normal-mode bucketing: uses area-normalised values and standard HEATMAP_BREAKS.
+    # Only runs when raw_breaks was not provided.
+    if raw_breaks is None:
         nz_breaks = list(HEATMAP_BREAKS)
         by_month = {}
         for month, odsek_targets in raw.items():
