@@ -83,6 +83,17 @@ HEATMAP_BREAKS = [0.25, 0.7, 2.0]
 # Breaks chosen to show winter (mostly bucket 1) vs autumn (bucket 2-3) vs 2016 peaks (bucket 4).
 GGE_HEATMAP_BREAKS = [0.02, 0.03, 0.12]
 
+# Bucket break points for SYNTHETIC odsek-level coloring.
+# Applied to the raw target value (m³/month, not normalised by odsek area).
+# Derived from Q25/Q50/Q75 of all non-zero synthetic target values.
+HEATMAP_BREAKS_SYN = [900, 3000, 9000]
+
+# Bucket break points for SYNTHETIC GGE-level coloring.
+# Applied to the raw summed target per GGE per month (m³/month, not normalised by GGE area).
+# Derived from Q25/Q50/Q75 of all non-zero synthetic GGE monthly sums.
+GGE_HEATMAP_BREAKS_SYN = [50000, 300000, 600000]
+
+
 # Easy-to-change list of columns shown in the left panel.
 ODSEKI_FIELDS = [
     'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
@@ -128,7 +139,7 @@ GGE_HEATMAP_BY_MONTH = {}    # {leto_mesec: {(ggo_naziv, gge_naziv): bucket 1–
 GGE_HEATMAP_CACHE_PATH = BASE_DIR / 'data' / 'gge_heatmap_cache.json'
 GGE_HEATMAP_BY_MONTH_SYN = {}
 GGE_HEATMAP_CACHE_PATH_SYN = BASE_DIR / 'data' / 'gge_heatmap_cache_synthetic.json'
-_GGE_CACHE_VERSION = 6  # bumped: compound (ggo, gge) key
+_GGE_CACHE_VERSION = 7  # bumped: synthetic GGE now uses Q25/Q50/Q75 breaks
 
 # GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
 # Unique GGE identifier is the pair (ggo_naziv, gge_naziv) — gge_naziv alone is not unique.
@@ -674,11 +685,14 @@ def load_heatmap_data():
         )
 
 
-def _load_heatmap_dataset(past_path, future_path, label):
+def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
     """Generic loader: read past+future CSVs, merge, normalise, bucket.
 
     Returns (months, nz_breaks, by_month, abs_by_month, forecast_start).
     Returns empty structures when neither file exists.
+    raw_breaks: if provided (list of 3 break points), buckets are assigned from
+    the raw target values *before* area-normalisation using these breaks.
+    Otherwise the normalised values are bucketed with HEATMAP_BREAKS.
     """
     _configure_csv_field_limit()
     past_exists   = past_path.exists()
@@ -731,6 +745,19 @@ def _load_heatmap_dataset(past_path, future_path, label):
     if skipped_ggo:
         print(f"WARNING ({label}): Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
 
+    if raw_breaks is not None:
+        # Bucket from raw (pre-area-normalisation) values using the provided breaks.
+        nz_breaks = list(raw_breaks)
+        by_month = {}
+        for month, odsek_targets in raw.items():
+            buckets = {}
+            for odsek, target in odsek_targets.items():
+                b = _assign_heatmap_bucket(target, nz_breaks)
+                if b > 0:
+                    buckets[odsek] = b
+            by_month[month] = buckets
+
+    # Normalise raw values by odsek area (needed for abs_by_month and normal-mode bucketing).
     no_area = 0
     for month_data in raw.values():
         for odsek in list(month_data.keys()):
@@ -751,15 +778,16 @@ def _load_heatmap_dataset(past_path, future_path, label):
             abs_month[odsek] = round(rel * p if p > 0 else rel, 2)
         abs_by_month[month] = abs_month
 
-    nz_breaks = list(HEATMAP_BREAKS)
-    by_month = {}
-    for month, odsek_targets in raw.items():
-        buckets = {}
-        for odsek, target in odsek_targets.items():
-            b = _assign_heatmap_bucket(target, nz_breaks)
-            if b > 0:
-                buckets[odsek] = b
-        by_month[month] = buckets
+    if raw_breaks is None:
+        nz_breaks = list(HEATMAP_BREAKS)
+        by_month = {}
+        for month, odsek_targets in raw.items():
+            buckets = {}
+            for odsek, target in odsek_targets.items():
+                b = _assign_heatmap_bucket(target, nz_breaks)
+                if b > 0:
+                    buckets[odsek] = b
+            by_month[month] = buckets
 
     print(
         f"Heatmap ({label}): {len(months)} months "
@@ -780,7 +808,8 @@ def load_heatmap_data_synthetic():
      FORECAST_START_MONTH_SYN) = _load_heatmap_dataset(
          HEATMAP_PAST_DATA_PATH_SYN,
          HEATMAP_FUTURE_DATA_PATH_SYN,
-         'synthetic'
+         'synthetic',
+         raw_breaks=HEATMAP_BREAKS_SYN
      )
 
     if HEATMAP_ABS_BY_MONTH_SYN:
@@ -788,24 +817,27 @@ def load_heatmap_data_synthetic():
             (HEATMAP_PAST_DATA_PATH_SYN, HEATMAP_FUTURE_DATA_PATH_SYN),
             GGE_HEATMAP_CACHE_PATH_SYN,
             HEATMAP_ABS_BY_MONTH_SYN,
-            label='synthetic'
+            label='synthetic',
+            raw_breaks=GGE_HEATMAP_BREAKS_SYN
         )
 
 
-def _build_gge_heatmap(abs_by_month=None):
+def _build_gge_heatmap(abs_by_month=None, raw_breaks=None):
     """Aggregate absolute heatmap targets by GGE per month → relative posek → bucket.
 
     Computes its own bucket breaks from GGE-level relative posek values, separate from
     the odsek breaks. GGE values are averaged over larger areas so their distribution
     is narrower — shared breaks with odsek would crush most GGEs into bucket 1.
     Only odseki present in odseki.csv (with a known GGE and area) are counted.
+    raw_breaks: if provided, buckets are assigned from the raw summed target per GGE
+    (before area-normalisation) using these breaks instead of GGE_HEATMAP_BREAKS.
     """
     if abs_by_month is None:
         abs_by_month = HEATMAP_ABS_BY_MONTH
     # First pass: sum absolute targets per (ggo_naziv, gge_naziv) compound key per month.
     # ODSEK_TO_GGE now stores (ggo_naziv, gge_naziv) tuples so GGEs with the same name
     # in different GGOs are aggregated separately.
-    gge_relatives = {}   # {month: {(ggo_naziv, gge_naziv): relative_posek}}
+    gge_sums = {}     # {month: {(ggo_naziv, gge_naziv): raw_sum_m3}}
     for month, abs_data in abs_by_month.items():
         target_sum = defaultdict(float)
         for odsek_id, target_abs in abs_data.items():
@@ -813,21 +845,31 @@ def _build_gge_heatmap(abs_by_month=None):
             if not gge_key:
                 continue
             target_sum[gge_key] += target_abs
-        month_rel = {}
-        for gge_key, t in target_sum.items():
-            area = GGE_AREA.get(gge_key, 0)
-            month_rel[gge_key] = t / area if area > 0 else t
-        gge_relatives[month] = month_rel
+        gge_sums[month] = dict(target_sum)
 
+    if raw_breaks is not None:
+        # Bucket from raw summed targets (before area-normalisation).
+        gge_breaks = list(raw_breaks)
+        print(f"  GGE breaks (raw m³/month): {gge_breaks}")
+        gge_by_month = {}
+        for month, month_sums in gge_sums.items():
+            buckets = {}
+            for gge_key, raw_total in month_sums.items():
+                b = _assign_heatmap_bucket(raw_total, gge_breaks)
+                if b > 0:
+                    buckets[gge_key] = b
+            gge_by_month[month] = buckets
+        return gge_by_month
+
+    # Normal path: normalise by GGE area then bucket.
     gge_breaks = list(GGE_HEATMAP_BREAKS)
     print(f"  GGE breaks (m³/ha): {gge_breaks}")
-
-    # Second pass: assign buckets using GGE-specific breaks.
-    # Result keys are (ggo_naziv, gge_naziv) tuples.
     gge_by_month = {}
-    for month, month_rel in gge_relatives.items():
+    for month, month_sums in gge_sums.items():
         buckets = {}
-        for gge_key, relative in month_rel.items():
+        for gge_key, raw_total in month_sums.items():
+            area = GGE_AREA.get(gge_key, 0)
+            relative = raw_total / area if area > 0 else raw_total
             b = _assign_heatmap_bucket(relative, gge_breaks)
             if b > 0:
                 buckets[gge_key] = b
@@ -845,7 +887,8 @@ def _gge_key_decode(s):
     return (parts[0], parts[1]) if len(parts) == 2 else (s, '')
 
 
-def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
+def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label='',
+                             raw_breaks=None):
     """Load GGE heatmap from cache or rebuild it.
 
     Returns {month: {(ggo_naziv, gge_naziv): bucket}}.
@@ -854,6 +897,7 @@ def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
     cache_path: Path to the JSON cache file.
     abs_by_month: absolute heatmap data to build from if cache is stale.
     label: short string for log messages (e.g. 'real' or 'synthetic').
+    raw_breaks: if provided, pass to _build_gge_heatmap to bucket on raw sums.
     """
     src_mtime = max(
         os.path.getmtime(p) if p.exists() else 0
@@ -882,7 +926,7 @@ def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
             print(f"GGE cache ({label}) read failed ({e}) — rebuilding...")
 
     print(f"Building GGE heatmap aggregation ({label})...")
-    result = _build_gge_heatmap(abs_by_month)
+    result = _build_gge_heatmap(abs_by_month, raw_breaks=raw_breaks)
     print(f"GGE heatmap ({label}) built: {len(result)} months, "
           f"{sum(len(v) for v in result.values())} non-zero GGE entries")
 

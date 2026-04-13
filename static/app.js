@@ -483,11 +483,38 @@ function setDataset(dataset) {
     currentDataset = dataset;
     datasetBtnReal.classList.toggle('dataset-btn-active', dataset === 'real');
     datasetBtnSynthetic.classList.toggle('dataset-btn-active', dataset === 'synthetic');
+    // Update legend labels based on dataset
+    updateLegendForDataset(dataset);
     // Clear caches so next render fetches fresh data for the new dataset
     heatmapCache.clear();
     ggeCache.clear();
     // Reload slider range and colours, restoring the previously viewed month if possible
     initHeatmap(preservedMonth).catch(console.error);
+}
+
+function updateLegendForDataset(dataset) {
+    const sectionTitle = document.querySelector('.legend-section-title');
+    const legendRows = document.querySelectorAll('.legend-rows')[0]?.querySelectorAll('.legend-row');
+    if (!sectionTitle || !legendRows) return;
+    if (dataset === 'synthetic') {
+        sectionTitle.textContent = 'ŠTEVILO PODLUBNIKOV';
+        const labels = ['Brez', 'Nizko', 'Srednje', 'Visoko', 'Zelo visoko'];
+        legendRows.forEach((row, i) => {
+            const swatch = row.querySelector('.legend-swatch');
+            if (swatch) row.innerHTML = '';
+            if (swatch) row.appendChild(swatch);
+            row.appendChild(document.createTextNode(labels[i]));
+        });
+    } else {
+        sectionTitle.textContent = 'Aktivnost podlubnika';
+        const labels = ['Brez aktivnosti', 'Nizka', 'Srednja', 'Visoka', 'Zelo visoka'];
+        legendRows.forEach((row, i) => {
+            const swatch = row.querySelector('.legend-swatch');
+            if (swatch) row.innerHTML = '';
+            if (swatch) row.appendChild(swatch);
+            row.appendChild(document.createTextNode(labels[i]));
+        });
+    }
 }
 
 datasetBtnReal.addEventListener('click', () => setDataset('real'));
@@ -675,25 +702,32 @@ const ANALYZE_BTN_HTML = '<button class="posek-analyze-btn" type="button">Analiz
 function renderHeatmapValue(data, month) {
     const [year, mon] = month.split('-');
     const label = `${SL_MONTHS[parseInt(mon, 10) - 1] ?? ''} ${year}`;
+    const isSynthetic = currentDataset === 'synthetic';
+    const sectionTitle = isSynthetic ? 'Število podlubnikov' : 'Posek';
+    const noDataMsg = isSynthetic ? 'Ni podatkov o podlubnikih.' : 'Ni podatkov o poseku.';
 
     if (!data.has_data) {
         heatmapInfoEl.classList.remove('hidden');
         heatmapInfoEl.innerHTML =
-            `<div class="posek-header"><div class="posek-title">Posek — ${label}</div>${ANALYZE_BTN_HTML}</div>` +
-            `<div class="posek-none">Ni podatkov o poseku.</div>`;
+            `<div class="posek-header"><div class="posek-title">${sectionTitle} — ${label}</div>${ANALYZE_BTN_HTML}</div>` +
+            `<div class="posek-none">${noDataMsg}</div>`;
         return;
     }
 
     const absStr = data.target != null
-        ? `${data.target.toLocaleString('sl-SI', {maximumFractionDigits: 2})} m³`
+        ? isSynthetic
+            ? `${data.target.toLocaleString('sl-SI', {maximumFractionDigits: 2})} podlubnik/m²`
+            : `${data.target.toLocaleString('sl-SI', {maximumFractionDigits: 2})} m³`
         : '—';
     const relStr = data.relative != null
-        ? `${data.relative.toLocaleString('sl-SI', {maximumFractionDigits: 4})} m³/ha`
+        ? isSynthetic
+            ? ``
+            : `${data.relative.toLocaleString('sl-SI', {maximumFractionDigits: 2})} m³/ha`
         : '—';
 
     heatmapInfoEl.classList.remove('hidden');
     heatmapInfoEl.innerHTML =
-        `<div class="posek-header"><div class="posek-title">Posek — ${label}</div>${ANALYZE_BTN_HTML}</div>` +
+        `<div class="posek-header"><div class="posek-title">${sectionTitle} — ${label}</div>${ANALYZE_BTN_HTML}</div>` +
         `<div class="posek-total">${absStr}</div>` +
         `<div class="posek-relative">${relStr}</div>`;
 }
@@ -730,6 +764,8 @@ async function openAnalysisModal() {
     if (!odsekId) return;
 
     analysisModal.classList.remove('hidden');
+    document.getElementById('analysis-modal-title').textContent =
+        currentDataset === 'synthetic' ? 'Število podlubnikov skozi čas' : 'Posek skozi čas';
     analysisSubtitle.textContent = `Odsek ${odsekId}${ggoName ? ' · GGO ' + ggoName : ''}`;
     if (_analysisChart) { _analysisChart.destroy(); _analysisChart = null; }
 
@@ -781,11 +817,16 @@ async function openAnalysisModal() {
                             },
                             label: ctx => {
                                 const s = series[ctx.dataIndex];
+                                const isSyn = currentDataset === 'synthetic';
                                 const abs = s.has_data
-                                    ? `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} m³`
+                                    ? isSyn
+                                        ? `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} podlubnikov`
+                                        : `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} m³`
                                     : 'Ni podatkov';
                                 const rel = s.relative != null
-                                    ? `  (${s.relative.toLocaleString('sl-SI', { maximumFractionDigits: 4 })} m³/ha)`
+                                    ? isSyn
+                                        ? `  (${s.relative.toLocaleString('sl-SI', { maximumFractionDigits: 4 })} podlubnik/m²)`
+                                        : `  (${s.relative.toLocaleString('sl-SI', { maximumFractionDigits: 4 })} m³/ha)`
                                     : '';
                                 return abs + rel;
                             }
@@ -806,7 +847,7 @@ async function openAnalysisModal() {
                     },
                     y: {
                         beginAtZero: true,
-                        title: { display: true, text: 'Posek (m³)', font: { size: 11 } },
+                        title: { display: true, text: currentDataset === 'synthetic' ? 'Število podlubnikov' : 'Posek (m³)', font: { size: 11 } },
                         grid: { color: 'rgba(0,0,0,0.06)' },
                         ticks: { font: { size: 11 } }
                     }
