@@ -402,7 +402,7 @@ def build_gge_area_index(mbtiles_file: str, zoom: int = 11) -> dict:
         y_xyz   = n_tiles - 1 - y_tms
 
         for layer_name, features in layers:
-            if layer_name != 'gge_maps':
+            if layer_name not in ('gge_maps', 'gge_vektor'):
                 continue
             for feat in features:
                 gge = str(feat['props'].get('gge_naziv', '')).strip()
@@ -1225,14 +1225,12 @@ class TileHandler(BaseHTTPRequestHandler):
             if compound_buckets is None:
                 self._send_json(404, {'error': f'No GGE heatmap data for {month}'})
                 return
-            # GGE vector tiles only carry gge_naziv (no GGO property), so the MapLibre
-            # match expression can only key on gge_naziv.  Collapse compound keys to
-            # gge_naziv → max bucket across all GGOs that share that name.
-            collapsed: dict[str, int] = {}
-            for (ggo, gge), bucket in compound_buckets.items():
-                if bucket > collapsed.get(gge, 0):
-                    collapsed[gge] = bucket
-            self._send_json(200, collapsed)
+            # GGE tiles now carry ggo_naziv, so the frontend can match on the compound
+            # key ggo\x00gge (same separator as _GGE_KEY_SEP).  Return encoded keys
+            # directly — the frontend builds the concat expression to match them.
+            encoded = {_gge_key_encode(ggo, gge): bucket
+                       for (ggo, gge), bucket in compound_buckets.items()}
+            self._send_json(200, encoded)
             return
 
         if path.startswith('/slo-tiles/'):

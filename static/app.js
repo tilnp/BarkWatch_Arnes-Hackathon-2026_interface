@@ -34,6 +34,7 @@ const FIELD_LABELS = {
 const DISPLAY_FIELDS = Object.keys(FIELD_LABELS);
 
 const HIGHLIGHT_SELECTED_ODSEK_BACKGROUND = false;
+const HIGHLIGHT_SELECTED_GGE_BACKGROUND = false;
 
 const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
 
@@ -91,7 +92,7 @@ const map = new maplibregl.Map({
                 id: 'gge-fill',
                 type: 'fill',
                 source: 'gge',
-                'source-layer': 'gge_maps',
+                'source-layer': 'gge_vektor',
                 layout: { visibility: INITIAL_ZOOM < GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
                 paint: {
                     'fill-color': COLOR_ODSEKI_FILL,
@@ -126,7 +127,7 @@ const map = new maplibregl.Map({
                 id: 'gge-outline',
                 type: 'line',
                 source: 'gge',
-                'source-layer': 'gge_maps',
+                'source-layer': 'gge_vektor',
                 paint: {
                     'line-color': COLOR_ODSEKI_BORDER,
                     'line-width': 0.8,
@@ -165,11 +166,22 @@ const map = new maplibregl.Map({
                 }
             },
             {
+                id: 'gge-selected-fill',
+                type: 'fill',
+                source: 'gge',
+                'source-layer': 'gge_vektor',
+                filter: ['==', ['literal', false], true],
+                paint: {
+                    'fill-color': '#60cdee',
+                    'fill-opacity': 0.18
+                }
+            },
+            {
                 id: 'gge-selected-outline',
                 type: 'line',
                 source: 'gge',
-                'source-layer': 'gge_maps',
-                filter: ['==', ['get', 'gge_naziv'], ''],
+                'source-layer': 'gge_vektor',
+                filter: ['==', ['literal', false], true],
                 paint: {
                     'line-color': '#60cdee',
                     'line-width': 2.5,
@@ -493,7 +505,15 @@ async function applyMonthColor() {
         }
     }
     if (ggeBuckets && map.getLayer('gge-fill')) {
-        map.setPaintProperty('gge-fill', 'fill-color', buildHeatmapExpression(ggeBuckets, 'gge_naziv'));
+        // Tiles now carry ggo_naziv — use compound key ggo\x00gge so same-name GGEs in
+        // different GGOs receive their own correct bucket colour.
+        const ggeKeyExpr = ['concat', ['get', 'ggo_naziv'], '\x00', ['get', 'gge_naziv']];
+        const args = ['match', ggeKeyExpr];
+        for (const [id, bucket] of Object.entries(ggeBuckets)) {
+            args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
+        }
+        args.push(HEATMAP_COLORS[0]);
+        map.setPaintProperty('gge-fill', 'fill-color', args);
     }
 }
 
@@ -879,16 +899,29 @@ function _applyFilter(f) {
     if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
 }
 
-function setGgeHighlight(ggeName) {
-    if (map.getLayer('gge-selected-outline')) {
-        map.setFilter('gge-selected-outline',
-            ggeName ? ['==', ['get', 'gge_naziv'], ggeName] : ['==', ['get', 'gge_naziv'], '']
-        );
+const _GGE_NEVER_MATCH = ['==', ['literal', false], true];
+
+function setGgeHighlight(ggoName, ggeName) {
+    let filter;
+    if (ggoName && ggeName) {
+        filter = ['all',
+            ['==', ['get', 'ggo_naziv'], ggoName],
+            ['==', ['get', 'gge_naziv'], ggeName]
+        ];
+    } else if (ggeName) {
+        // Fallback: filter only by gge_naziv when GGO is unknown
+        filter = ['==', ['get', 'gge_naziv'], ggeName];
+    } else {
+        filter = _GGE_NEVER_MATCH;
     }
+    if (HIGHLIGHT_SELECTED_GGE_BACKGROUND) {
+        if (map.getLayer('gge-selected-fill'))    map.setFilter('gge-selected-fill',    filter);
+    }
+    if (map.getLayer('gge-selected-outline')) map.setFilter('gge-selected-outline', filter);
 }
 
 function clearGgeHighlight() {
-    setGgeHighlight(null);
+    setGgeHighlight(null, null);
 }
 
 /** Clear the highlight layers and side-panel odsek info. */
@@ -1013,7 +1046,10 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
     // Tiles store IDs with spaces, so pass the display form to setHighlight.
     setHighlight(displayId, ggoName);
-    setGgeHighlight(String(payload.data.gge_naziv || '').trim());
+    setGgeHighlight(
+        String(payload.data.ggo_naziv || ggoName || '').trim(),
+        String(payload.data.gge_naziv || '').trim()
+    );
 
     const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
 
@@ -1207,19 +1243,22 @@ map.on('click', 'gge-fill', (event) => {
     const ggeName = String(feature?.properties?.gge_naziv || '').trim();
     if (!ggeName) return;
 
-    // Derive the GGO from the invisible GGO fill layer at the exact click pixel.
-    // GGE tiles carry only gge_naziv, so we rely on the overlapping GGO polygon.
-    const ggoFeatures = map.queryRenderedFeatures(event.point, { layers: ['ggo-fill-hidden'] });
-    const ggoName = String(ggoFeatures[0]?.properties?.ggo_naziv || '').trim();
+    // GGE tiles now carry ggo_naziv — use it directly for the unique <ggo, gge> key.
+    // Fall back to the overlapping GGO polygon for older tiles that lack the property.
+    let ggoName = String(feature?.properties?.ggo_naziv || '').trim();
+    if (!ggoName) {
+        const ggoFeatures = map.queryRenderedFeatures(event.point, { layers: ['ggo-fill-hidden'] });
+        ggoName = String(ggoFeatures[0]?.properties?.ggo_naziv || '').trim();
+    }
 
     clearHighlight();
-    setGgeHighlight(ggeName);
+    setGgeHighlight(ggoName, ggeName);
 
     // Clear the odsek search box.
     searchInput.value = '';
     suggestionsEl.innerHTML = '';
 
-    // Sync the GGO dropdown using the GGO derived from the click point.
+    // Sync the GGO dropdown using the GGO from the tile.
     if (ggoName && ggoCodeByName.has(ggoName)) {
         ggoSelect.value = ggoName;
         setSearchEnabled(true);
@@ -1230,24 +1269,27 @@ map.on('click', 'gge-fill', (event) => {
 
     applyMonthColor().catch(console.error);
 
-    // Get the clicked tile fragment's bbox as a geographic anchor.
-    // Two GGEs with the same name are always in different GGOs and therefore far apart,
-    // so we only collect tile pieces that overlap this fragment (plus a generous buffer).
+    // Collect bbox of all tile fragments for this exact <ggo, gge> pair.
+    // Filter by both ggo_naziv and gge_naziv so same-name GGEs in other GGOs are excluded.
     const anchorBbox = getBboxFromGeometry(feature.geometry);
     if (!anchorBbox) return;
     const [ax0, ay0, ax1, ay1] = anchorBbox;
-    const bufDeg = 0.8; // ~80 km — enough to span a single GGE, not a same-name duplicate
+    const bufDeg = 0.8; // ~80 km guard — in case ggo_naziv is missing from some fragments
+
+    const tileFilter = ggoName
+        ? ['all', ['==', ['get', 'ggo_naziv'], ggoName], ['==', ['get', 'gge_naziv'], ggeName]]
+        : ['==', ['get', 'gge_naziv'], ggeName];
 
     const allFeatures = map.querySourceFeatures('gge', {
-        sourceLayer: 'gge_maps',
-        filter: ['==', ['get', 'gge_naziv'], ggeName]
+        sourceLayer: 'gge_vektor',
+        filter: tileFilter
     });
     let bbox = [Infinity, Infinity, -Infinity, -Infinity];
     for (const f of allFeatures) {
         const b = getBboxFromGeometry(f.geometry);
         if (!b) continue;
         const [fx0, fy0, fx1, fy1] = b;
-        // Skip fragments that don't overlap the anchor bbox (with buffer).
+        // Skip fragments outside the anchor buffer (fallback guard for tiles missing ggo_naziv).
         if (fx1 < ax0 - bufDeg || fx0 > ax1 + bufDeg ||
             fy1 < ay0 - bufDeg || fy0 > ay1 + bufDeg) continue;
         bbox = [Math.min(bbox[0], fx0), Math.min(bbox[1], fy0),
@@ -1319,6 +1361,10 @@ map.on('click', 'odseki-fill', (event) => {
             renderDetailsTable(payload.data);
             fetchAndShowHeatmapValue(canonicalClicked, currentMonthString(), fallbackGgoName).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);
+            setGgeHighlight(
+                String(payload.data.ggo_naziv || fallbackGgoName || '').trim(),
+                String(payload.data.gge_naziv || '').trim()
+            );
             _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
             {
                 const ggoFilter = fallbackGgoName
