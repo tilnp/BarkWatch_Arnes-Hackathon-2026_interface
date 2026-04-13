@@ -314,7 +314,145 @@ map.addControl({
     onRemove() { this._container.parentNode.removeChild(this._container); }
 }, 'top-right');
 
-const ggoSelect = document.getElementById('ggo-select');
+// Custom dropdown adapter — exposes the same API as a native <select> so the
+// rest of the code (.value, .innerHTML, .appendChild, .addEventListener) works unchanged.
+const ggoSelect = (() => {
+    const trigger  = document.getElementById('ggo-select-trigger');
+    const display  = document.getElementById('ggo-select-display');
+    const list     = document.getElementById('ggo-select-list');
+    const PLACEHOLDER = '-- izberi GGO --';
+
+    let _value = '';
+    const _changeListeners = [];
+
+    // ── helpers ─────────────────────────────────────────────────────────────
+    function open() {
+        list.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+        // scroll selected option into view
+        list.querySelector('.ggo-select-option.selected')?.scrollIntoView({ block: 'nearest' });
+    }
+
+    function close() {
+        list.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+        clearHighlighted();
+    }
+
+    function clearHighlighted() {
+        list.querySelectorAll('.ggo-select-option.highlighted').forEach(o => o.classList.remove('highlighted'));
+    }
+
+    function getOptions() {
+        return [...list.querySelectorAll('.ggo-select-option')];
+    }
+
+    function highlightAt(idx) {
+        const opts = getOptions();
+        opts.forEach((o, i) => o.classList.toggle('highlighted', i === idx));
+        opts[idx]?.scrollIntoView({ block: 'nearest' });
+    }
+
+    function highlightedIndex() {
+        return getOptions().findIndex(o => o.classList.contains('highlighted'));
+    }
+
+    function commitSelect(value, text) {
+        _value = value;
+        display.textContent = value ? text : PLACEHOLDER;
+        trigger.classList.toggle('ggo-placeholder', !value);
+        getOptions().forEach(o => o.classList.toggle('selected', o.dataset.value === value));
+        close();
+        trigger.focus();
+        _changeListeners.forEach(fn => fn());
+    }
+
+    function makeOptionEl(value, text) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ggo-select-option';
+        btn.dataset.value = value;
+        btn.textContent = text;
+        btn.addEventListener('mouseenter', () => {
+            clearHighlighted();
+            btn.classList.add('highlighted');
+        });
+        btn.addEventListener('mouseleave', () => btn.classList.remove('highlighted'));
+        btn.addEventListener('click', () => commitSelect(value, text));
+        return btn;
+    }
+
+    // ── events ───────────────────────────────────────────────────────────────
+    trigger.addEventListener('click', () => list.hidden ? open() : close());
+
+    // All keyboard handling stays on the trigger so focus never leaves it.
+    trigger.addEventListener('keydown', (e) => {
+        const isOpen = !list.hidden;
+        const opts   = getOptions();
+        const idx    = highlightedIndex();
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!isOpen) {
+                open();
+                highlightAt(Math.max(0, opts.findIndex(o => o.dataset.value === _value)));
+            } else {
+                highlightAt(Math.min(idx + 1, opts.length - 1));
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (isOpen) highlightAt(Math.max(idx - 1, 0));
+        } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (!isOpen) {
+                open();
+                highlightAt(Math.max(0, opts.findIndex(o => o.dataset.value === _value)));
+            } else {
+                const highlighted = opts[idx];
+                if (highlighted) commitSelect(highlighted.dataset.value, highlighted.textContent);
+            }
+        } else if (e.key === 'Escape') {
+            if (isOpen) close();
+        } else if (e.key === 'Tab') {
+            if (isOpen) close();
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!trigger.closest('#ggo-select-custom').contains(e.target)) close();
+    });
+
+    // ── public API (mirrors native <select>) ─────────────────────────────────
+    return {
+        get value() { return _value; },
+
+        set value(v) {
+            const opt = getOptions().find(o => o.dataset.value === v);
+            _value = (v === '' || opt) ? v : _value;
+            display.textContent = opt ? opt.textContent : PLACEHOLDER;
+            trigger.classList.toggle('ggo-placeholder', !_value);
+            getOptions().forEach(o => o.classList.toggle('selected', o.dataset.value === _value));
+        },
+
+        // Called as: ggoSelect.innerHTML = '<option value="">...</option>'  (reset)
+        set innerHTML(_html) {
+            _value = '';
+            display.textContent = PLACEHOLDER;
+            trigger.classList.add('ggo-placeholder');
+            list.innerHTML = '';
+        },
+
+        // Called as: ggoSelect.appendChild(optionEl)  (populate)
+        appendChild(optionEl) {
+            if (!optionEl.value) return; // skip placeholder <option value="">
+            list.appendChild(makeOptionEl(optionEl.value, optionEl.textContent));
+        },
+
+        addEventListener(event, fn) {
+            if (event === 'change') _changeListeners.push(fn);
+        },
+    };
+})();
 const searchInput = document.getElementById('odsek-search');
 const searchBtn = document.getElementById('search-btn');
 const suggestionsEl = document.getElementById('suggestions');

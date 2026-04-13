@@ -23,10 +23,15 @@
             </div>
 
             <div class="search-block">
-                <label for="ggo-select">Izberi Gozdnogospodarsko območje</label>
-                <select id="ggo-select">
-                    <option value="">-- izberi GGO --</option>
-                </select>
+                <label id="ggo-select-label-el">Izberi Gozdnogospodarsko območje</label>
+                <div id="ggo-select-custom" class="ggo-custom-select" aria-labelledby="ggo-select-label-el">
+                    <button type="button" id="ggo-select-trigger" class="ggo-select-trigger ggo-placeholder"
+                            aria-haspopup="listbox" aria-expanded="false">
+                        <span id="ggo-select-display">-- izberi GGO --</span>
+                        <span class="ggo-select-arrow" aria-hidden="true"></span>
+                    </button>
+                    <div id="ggo-select-list" class="ggo-select-list" role="listbox" hidden></div>
+                </div>
 
                 <label for="odsek-search">Išči po odsek ID</label>
                 <div class="search-row">
