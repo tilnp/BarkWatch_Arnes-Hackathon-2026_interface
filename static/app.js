@@ -145,6 +145,14 @@ const map = new maplibregl.Map({
                 }
             },
             {
+                // Invisible fill used only for queryRenderedFeatures GGO hit-testing.
+                id: 'ggo-fill-hidden',
+                type: 'fill',
+                source: 'ggo',
+                'source-layer': 'ggo_maps',
+                paint: { 'fill-opacity': 0 }
+            },
+            {
                 id: 'ggo-outline',
                 type: 'line',
                 source: 'ggo',
@@ -1198,6 +1206,12 @@ map.on('click', 'gge-fill', (event) => {
     if (!feature) return;
     const ggeName = String(feature?.properties?.gge_naziv || '').trim();
     if (!ggeName) return;
+
+    // Derive the GGO from the invisible GGO fill layer at the exact click pixel.
+    // GGE tiles carry only gge_naziv, so we rely on the overlapping GGO polygon.
+    const ggoFeatures = map.queryRenderedFeatures(event.point, { layers: ['ggo-fill-hidden'] });
+    const ggoName = String(ggoFeatures[0]?.properties?.ggo_naziv || '').trim();
+
     clearHighlight();
     setGgeHighlight(ggeName);
 
@@ -1205,24 +1219,25 @@ map.on('click', 'gge-fill', (event) => {
     searchInput.value = '';
     suggestionsEl.innerHTML = '';
 
-    // Lookup the GGO for this GGE and sync the dropdown.
-    fetch(`/api/gge/ggo?gge=${encodeURIComponent(ggeName)}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => {
-            const ggoName = data?.ggo_naziv;
-            if (ggoName && ggoCodeByName.has(ggoName)) {
-                ggoSelect.value = ggoName;
-                setSearchEnabled(true);
-                selectedOdsekEl.textContent = `Izbran GGO: ${ggoName}`;
-                detailsEl.classList.add('empty');
-                detailsEl.textContent = 'Izberi odsek.';
-            }
-        })
-        .catch(() => {});
+    // Sync the GGO dropdown using the GGO derived from the click point.
+    if (ggoName && ggoCodeByName.has(ggoName)) {
+        ggoSelect.value = ggoName;
+        setSearchEnabled(true);
+        selectedOdsekEl.textContent = `Izbran GGO: ${ggoName}`;
+        detailsEl.classList.add('empty');
+        detailsEl.textContent = 'Izberi odsek.';
+    }
 
     applyMonthColor().catch(console.error);
 
-    // Query ALL tile pieces of this GGE across the full source to get the true combined bbox.
+    // Get the clicked tile fragment's bbox as a geographic anchor.
+    // Two GGEs with the same name are always in different GGOs and therefore far apart,
+    // so we only collect tile pieces that overlap this fragment (plus a generous buffer).
+    const anchorBbox = getBboxFromGeometry(feature.geometry);
+    if (!anchorBbox) return;
+    const [ax0, ay0, ax1, ay1] = anchorBbox;
+    const bufDeg = 0.8; // ~80 km — enough to span a single GGE, not a same-name duplicate
+
     const allFeatures = map.querySourceFeatures('gge', {
         sourceLayer: 'gge_maps',
         filter: ['==', ['get', 'gge_naziv'], ggeName]
@@ -1231,19 +1246,20 @@ map.on('click', 'gge-fill', (event) => {
     for (const f of allFeatures) {
         const b = getBboxFromGeometry(f.geometry);
         if (!b) continue;
-        bbox = [Math.min(bbox[0], b[0]), Math.min(bbox[1], b[1]),
-                Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])];
+        const [fx0, fy0, fx1, fy1] = b;
+        // Skip fragments that don't overlap the anchor bbox (with buffer).
+        if (fx1 < ax0 - bufDeg || fx0 > ax1 + bufDeg ||
+            fy1 < ay0 - bufDeg || fy0 > ay1 + bufDeg) continue;
+        bbox = [Math.min(bbox[0], fx0), Math.min(bbox[1], fy0),
+                Math.max(bbox[2], fx1), Math.max(bbox[3], fy1)];
     }
     if (!Number.isFinite(bbox[0])) return;
 
-    // Use cameraForBounds to get the exact zoom, then clamp to GGE_TO_ODSEK_ZOOM so we always
-    // land at odsek zoom even for large GGEs. flyTo with an explicit zoom avoids the ambiguity
-    // of fitBounds minZoom which may not reliably override the computed zoom.
     const bounds = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]];
     const cam = map.cameraForBounds(bounds, { padding: 50, maxZoom: 14 });
     const targetZoom = Math.max((cam?.zoom ?? GGE_TO_ODSEK_ZOOM), GGE_TO_ODSEK_ZOOM);
     _updateZoomVisibility(targetZoom);
-    prefetchOdsekiTiles(bbox, Math.floor(targetZoom)); // pre-warm browser HTTP cache before animation
+    prefetchOdsekiTiles(bbox, Math.floor(targetZoom));
     map.flyTo({ center: cam?.center ?? [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2], zoom: targetZoom, duration: ANIM.manual });
 });
 

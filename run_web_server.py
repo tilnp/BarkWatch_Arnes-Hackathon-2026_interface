@@ -124,16 +124,17 @@ HEATMAP_ABS_BY_MONTH_SYN = {}
 FORECAST_START_MONTH_SYN = ''
 
 # GGE heatmap (populated by _load_or_build_gge_cache after load_heatmap_data)
-GGE_HEATMAP_BY_MONTH = {}    # {leto_mesec: {gge_naziv: bucket 1–4}}
+GGE_HEATMAP_BY_MONTH = {}    # {leto_mesec: {(ggo_naziv, gge_naziv): bucket 1–4}}
 GGE_HEATMAP_CACHE_PATH = BASE_DIR / 'data' / 'gge_heatmap_cache.json'
 GGE_HEATMAP_BY_MONTH_SYN = {}
 GGE_HEATMAP_CACHE_PATH_SYN = BASE_DIR / 'data' / 'gge_heatmap_cache_synthetic.json'
-_GGE_CACHE_VERSION = 5
+_GGE_CACHE_VERSION = 6  # bumped: compound (ggo, gge) key
 
 # GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
-ODSEK_TO_GGE = {}            # {odsek_id: gge_naziv}
-GGO_BY_GGE   = {}            # {gge_naziv: ggo_naziv} — built from odseki data
-GGE_AREA = {}                # {gge_naziv: area_ha} — loaded from gge.csv
+# Unique GGE identifier is the pair (ggo_naziv, gge_naziv) — gge_naziv alone is not unique.
+ODSEK_TO_GGE = {}            # {odsek_id: (ggo_naziv, gge_naziv)}
+GGO_BY_GGE   = {}            # {gge_naziv: ggo_naziv} — click-handler compat only; ambiguous when names collide
+GGE_AREA = {}                # {(ggo_naziv, gge_naziv): area_ha} — loaded from gge.csv
 
 
 # ---------------------------------------------------------------------------
@@ -546,11 +547,13 @@ def load_odseki_data():
                 except ValueError:
                     pass
 
-                # GGE membership (odsek belongs to exactly one GGE)
+                # GGE membership — unique key is (ggo_naziv, gge_naziv)
                 gge = (record.get('gge_naziv') or '').strip()
                 if gge and odsek_id not in ODSEK_TO_GGE:
-                    ODSEK_TO_GGE[odsek_id] = gge
-                if gge and gge not in GGO_BY_GGE:
+                    ODSEK_TO_GGE[odsek_id] = (ggo_name, gge)
+                # GGO_BY_GGE is keyed by gge_naziv only for click-handler compat;
+                # last write wins when names collide across GGOs.
+                if gge:
                     GGO_BY_GGE[gge] = ggo_name
 
         # Average area across GGOs so coloring is consistent regardless of iteration order
@@ -574,23 +577,41 @@ def load_odseki_data():
 
 
 def load_gge_area_data():
-    """Load GGE areas (ha) from gge.csv into GGE_AREA."""
+    """Load GGE areas (ha) from gge.csv into GGE_AREA.
+
+    Key is (ggo_naziv, gge_naziv) — the unique GGE identifier.
+    The gge.csv 'ggo' column holds the GGO numeric code; it is resolved to
+    ggo_naziv via GGO_CODE_TO_NAZIV.
+    """
     global GGE_AREA
     GGE_AREA = {}
     if not GGE_DATA_PATH.exists():
         print(f"WARNING: GGE area file not found: {GGE_DATA_PATH}")
         return
     try:
+        skipped = 0
         with GGE_DATA_PATH.open('r', encoding='utf-8-sig', newline='') as f:
             for row in csv.DictReader(f):
                 gge = (row.get('gge_naziv') or '').strip()
+                ggo_raw = (row.get('ggo') or '').strip()
                 try:
                     area = float(row.get('povrsina') or 0)
                 except ValueError:
                     area = 0.0
-                if gge and area > 0:
-                    GGE_AREA[gge] = area
-        total_ha = sum(GGE_AREA.values())
+                if not gge or area <= 0:
+                    continue
+                try:
+                    ggo_code_int = int(ggo_raw)
+                except ValueError:
+                    skipped += 1
+                    continue
+                ggo_name = GGO_CODE_TO_NAZIV.get(ggo_code_int, '')
+                if not ggo_name:
+                    skipped += 1
+                    continue
+                GGE_AREA[(ggo_name, gge)] = area
+        if skipped:
+            print(f"  WARNING: {skipped} GGE rows skipped (unknown GGO code)")
         print(f"Loaded {len(GGE_AREA)} GGE areas from {GGE_DATA_PATH.name}")
     except Exception as e:
         print(f"WARNING: Failed to load GGE area data from {GGE_DATA_PATH}: {e}")
@@ -781,42 +802,54 @@ def _build_gge_heatmap(abs_by_month=None):
     """
     if abs_by_month is None:
         abs_by_month = HEATMAP_ABS_BY_MONTH
-    # First pass: sum absolute targets per (gge, month) across all months
-    gge_relatives = {}   # {month: {gge: relative_posek}}
+    # First pass: sum absolute targets per (ggo_naziv, gge_naziv) compound key per month.
+    # ODSEK_TO_GGE now stores (ggo_naziv, gge_naziv) tuples so GGEs with the same name
+    # in different GGOs are aggregated separately.
+    gge_relatives = {}   # {month: {(ggo_naziv, gge_naziv): relative_posek}}
     for month, abs_data in abs_by_month.items():
         target_sum = defaultdict(float)
         for odsek_id, target_abs in abs_data.items():
-            gge = ODSEK_TO_GGE.get(odsek_id)
-            if not gge:
+            gge_key = ODSEK_TO_GGE.get(odsek_id)  # (ggo_naziv, gge_naziv) tuple
+            if not gge_key:
                 continue
-            target_sum[gge] += target_abs
+            target_sum[gge_key] += target_abs
         month_rel = {}
-        for gge, t in target_sum.items():
-            # Use GGE polygon area (from mbtiles geometry) as denominator.
-            # Falls back to summed odsek area if the GGE was not found in the geometry index.
-            area = GGE_AREA.get(gge, 0)
-            month_rel[gge] = t / area if area > 0 else t
+        for gge_key, t in target_sum.items():
+            area = GGE_AREA.get(gge_key, 0)
+            month_rel[gge_key] = t / area if area > 0 else t
         gge_relatives[month] = month_rel
 
     gge_breaks = list(GGE_HEATMAP_BREAKS)
     print(f"  GGE breaks (m³/ha): {gge_breaks}")
 
-    # Second pass: assign buckets using GGE-specific breaks
+    # Second pass: assign buckets using GGE-specific breaks.
+    # Result keys are (ggo_naziv, gge_naziv) tuples.
     gge_by_month = {}
     for month, month_rel in gge_relatives.items():
         buckets = {}
-        for gge, relative in month_rel.items():
+        for gge_key, relative in month_rel.items():
             b = _assign_heatmap_bucket(relative, gge_breaks)
             if b > 0:
-                buckets[gge] = b
+                buckets[gge_key] = b
         gge_by_month[month] = buckets
     return gge_by_month
+
+
+_GGE_KEY_SEP = '\x00'  # separator for serialising (ggo_naziv, gge_naziv) tuples to JSON keys
+
+def _gge_key_encode(ggo, gge):
+    return f"{ggo}{_GGE_KEY_SEP}{gge}"
+
+def _gge_key_decode(s):
+    parts = s.split(_GGE_KEY_SEP, 1)
+    return (parts[0], parts[1]) if len(parts) == 2 else (s, '')
 
 
 def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
     """Load GGE heatmap from cache or rebuild it.
 
-    Returns the {month: {gge: bucket}} dict.
+    Returns {month: {(ggo_naziv, gge_naziv): bucket}}.
+    Cache is stored as JSON with compound keys encoded as 'ggo<sep>gge' strings.
     src_paths: iterable of Paths used as source mtime reference.
     cache_path: Path to the JSON cache file.
     abs_by_month: absolute heatmap data to build from if cache is stale.
@@ -834,7 +867,12 @@ def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
                 with cache_path.open('r', encoding='utf-8') as f:
                     raw = json.load(f)
                 if raw.get('_version') == _GGE_CACHE_VERSION:
-                    result = {k: v for k, v in raw.items() if not k.startswith('_')}
+                    # Deserialise: month → {encoded_key: bucket} → {(ggo, gge): bucket}
+                    result = {
+                        month: {_gge_key_decode(k): v for k, v in buckets.items()}
+                        for month, buckets in raw.items()
+                        if not month.startswith('_')
+                    }
                     print(f"GGE heatmap ({label}) loaded from cache ({len(result)} months)")
                     return result
                 print(f"GGE cache ({label}) version mismatch — rebuilding...")
@@ -847,7 +885,11 @@ def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
           f"{sum(len(v) for v in result.values())} non-zero GGE entries")
 
     try:
-        out = dict(result)
+        # Serialise: (ggo, gge) tuple keys → encoded strings for JSON
+        out = {
+            month: {_gge_key_encode(ggo, gge): bucket for (ggo, gge), bucket in buckets.items()}
+            for month, buckets in result.items()
+        }
         out['_version'] = _GGE_CACHE_VERSION
         with cache_path.open('w', encoding='utf-8') as f:
             json.dump(out, f, ensure_ascii=False)
@@ -1177,11 +1219,18 @@ class TileHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
             gge_src = GGE_HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else GGE_HEATMAP_BY_MONTH
-            buckets = gge_src.get(month)
-            if buckets is None:
+            compound_buckets = gge_src.get(month)
+            if compound_buckets is None:
                 self._send_json(404, {'error': f'No GGE heatmap data for {month}'})
                 return
-            self._send_json(200, buckets)
+            # GGE vector tiles only carry gge_naziv (no GGO property), so the MapLibre
+            # match expression can only key on gge_naziv.  Collapse compound keys to
+            # gge_naziv → max bucket across all GGOs that share that name.
+            collapsed: dict[str, int] = {}
+            for (ggo, gge), bucket in compound_buckets.items():
+                if bucket > collapsed.get(gge, 0):
+                    collapsed[gge] = bucket
+            self._send_json(200, collapsed)
             return
 
         if path.startswith('/slo-tiles/'):
