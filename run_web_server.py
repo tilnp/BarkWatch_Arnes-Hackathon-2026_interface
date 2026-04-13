@@ -39,6 +39,10 @@ GGE_DATA_PATH = BASE_DIR / 'data' / 'gge.csv'
 HEATMAP_PAST_DATA_PATH   = BASE_DIR / 'data' / 'heatmap_past_data.csv'
 HEATMAP_FUTURE_DATA_PATH = BASE_DIR / 'data' / 'heatmap_future_predictions.csv'
 
+# Synthetic heatmap source files (added later to data/).
+HEATMAP_PAST_DATA_PATH_SYN   = BASE_DIR / 'data' / 'heatmap_past_data_synthetic.csv'
+HEATMAP_FUTURE_DATA_PATH_SYN = BASE_DIR / 'data' / 'heatmap_future_predictions_synthetic.csv'
+
 # When the same (odsek, month) appears in both files, which source wins?
 # 'predictions' → future file takes priority; 'data' → past file takes priority.
 OVERLAP_PREFER = 'predictions'
@@ -112,9 +116,18 @@ HEATMAP_BY_MONTH = {}         # {leto_mesec: {odsek_id: bucket 1–4}} (only non
 HEATMAP_ABS_BY_MONTH = {}     # {leto_mesec: {odsek_id: absolute target}} (for detail panel)
 FORECAST_START_MONTH = ''     # first month from the future predictions file
 
+# Synthetic heatmap runtime data (populated by load_heatmap_data_synthetic)
+HEATMAP_MONTHS_SYN = []
+HEATMAP_NZ_BREAKS_SYN = []
+HEATMAP_BY_MONTH_SYN = {}
+HEATMAP_ABS_BY_MONTH_SYN = {}
+FORECAST_START_MONTH_SYN = ''
+
 # GGE heatmap (populated by _load_or_build_gge_cache after load_heatmap_data)
 GGE_HEATMAP_BY_MONTH = {}    # {leto_mesec: {gge_naziv: bucket 1–4}}
 GGE_HEATMAP_CACHE_PATH = BASE_DIR / 'data' / 'gge_heatmap_cache.json'
+GGE_HEATMAP_BY_MONTH_SYN = {}
+GGE_HEATMAP_CACHE_PATH_SYN = BASE_DIR / 'data' / 'gge_heatmap_cache_synthetic.json'
 _GGE_CACHE_VERSION = 5
 
 # GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
@@ -618,43 +631,66 @@ def _read_heatmap_file(path):
 
 
 def load_heatmap_data():
-    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, HEATMAP_ABS_BY_MONTH, FORECAST_START_MONTH
+    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, HEATMAP_ABS_BY_MONTH
+    global FORECAST_START_MONTH, GGE_HEATMAP_BY_MONTH
 
-    past_exists   = HEATMAP_PAST_DATA_PATH.exists()
-    future_exists = HEATMAP_FUTURE_DATA_PATH.exists()
+    (HEATMAP_MONTHS,
+     HEATMAP_NZ_BREAKS,
+     HEATMAP_BY_MONTH,
+     HEATMAP_ABS_BY_MONTH,
+     FORECAST_START_MONTH) = _load_heatmap_dataset(
+         HEATMAP_PAST_DATA_PATH,
+         HEATMAP_FUTURE_DATA_PATH,
+         'real'
+     )
+
+    if HEATMAP_ABS_BY_MONTH:
+        GGE_HEATMAP_BY_MONTH = _load_or_build_gge_cache(
+            (HEATMAP_PAST_DATA_PATH, HEATMAP_FUTURE_DATA_PATH),
+            GGE_HEATMAP_CACHE_PATH,
+            HEATMAP_ABS_BY_MONTH,
+            label='real'
+        )
+
+
+def _load_heatmap_dataset(past_path, future_path, label):
+    """Generic loader: read past+future CSVs, merge, normalise, bucket.
+
+    Returns (months, nz_breaks, by_month, abs_by_month, forecast_start).
+    Returns empty structures when neither file exists.
+    """
+    _configure_csv_field_limit()
+    past_exists   = past_path.exists()
+    future_exists = future_path.exists()
 
     if not past_exists and not future_exists:
-        print(f"WARNING: Neither heatmap file found "
-              f"({HEATMAP_PAST_DATA_PATH.name}, {HEATMAP_FUTURE_DATA_PATH.name})")
-        return
+        print(f"WARNING ({label}): Neither heatmap file found "
+              f"({past_path.name}, {future_path.name})")
+        return [], [], {}, {}, ''
 
-    print("Loading heatmap data (this may take a moment)...")
-    _configure_csv_field_limit()
-
+    print(f"Loading heatmap data ({label})...")
     skipped_ggo = set()
 
     raw_past = defaultdict(lambda: defaultdict(float))
     if past_exists:
-        raw_past, sg = _read_heatmap_file(HEATMAP_PAST_DATA_PATH)
+        raw_past, sg = _read_heatmap_file(past_path)
         skipped_ggo |= sg
         print(f"  Past data:   {sum(len(v) for v in raw_past.values()):,} entries "
               f"across {len(raw_past)} months")
     else:
-        print(f"WARNING: Past heatmap file not found: {HEATMAP_PAST_DATA_PATH}")
+        print(f"WARNING ({label}): Past heatmap file not found: {past_path}")
 
     raw_future = defaultdict(lambda: defaultdict(float))
     if future_exists:
-        raw_future, sg = _read_heatmap_file(HEATMAP_FUTURE_DATA_PATH)
+        raw_future, sg = _read_heatmap_file(future_path)
         skipped_ggo |= sg
         print(f"  Future data: {sum(len(v) for v in raw_future.values()):,} entries "
               f"across {len(raw_future)} months")
     else:
-        print(f"WARNING: Future heatmap file not found: {HEATMAP_FUTURE_DATA_PATH}")
+        print(f"WARNING ({label}): Future heatmap file not found: {future_path}")
 
-    # Derive forecast start from the earliest month in the future file.
-    FORECAST_START_MONTH = min(raw_future.keys()) if raw_future else ''
+    forecast_start = min(raw_future.keys()) if raw_future else ''
 
-    # Merge both sources. For overlapping (month, odsek) pairs, OVERLAP_PREFER decides.
     all_months = set(raw_past.keys()) | set(raw_future.keys())
     raw = {}
     for month in all_months:
@@ -662,9 +698,9 @@ def load_heatmap_data():
         in_future = month in raw_future
         if in_past and in_future:
             if OVERLAP_PREFER == 'predictions':
-                merged = {**raw_past[month], **raw_future[month]}   # future overwrites
+                merged = {**raw_past[month], **raw_future[month]}
             else:
-                merged = {**raw_future[month], **raw_past[month]}   # past overwrites
+                merged = {**raw_future[month], **raw_past[month]}
         elif in_past:
             merged = dict(raw_past[month])
         else:
@@ -672,10 +708,8 @@ def load_heatmap_data():
         raw[month] = merged
 
     if skipped_ggo:
-        print(f"WARNING: Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
+        print(f"WARNING ({label}): Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
 
-    # Convert absolute targets → relative (m³/ha) using povrsina from odseki_nazivi.
-    # Segments with no area data fall back to the absolute value.
     no_area = 0
     for month_data in raw.values():
         for odsek in list(month_data.keys()):
@@ -685,42 +719,59 @@ def load_heatmap_data():
             else:
                 no_area += 1
     if no_area:
-        print(f"  WARNING: {no_area} entries have no area data — kept as absolute fallback")
+        print(f"  WARNING ({label}): {no_area} entries have no area data — kept as absolute fallback")
 
-    HEATMAP_MONTHS = sorted(raw.keys())
-
-    # Store absolute targets before bucketing (for the detail panel endpoint).
-    # Re-derive from relative × povrsina to avoid keeping a second full copy of raw.
-    HEATMAP_ABS_BY_MONTH = {}
+    months = sorted(raw.keys())
+    abs_by_month = {}
     for month, odsek_data in raw.items():
         abs_month = {}
         for odsek, rel in odsek_data.items():
             p = POVRSINA_BY_ODSEK.get(odsek, 0)
             abs_month[odsek] = round(rel * p if p > 0 else rel, 2)
-        HEATMAP_ABS_BY_MONTH[month] = abs_month
+        abs_by_month[month] = abs_month
 
-    HEATMAP_NZ_BREAKS = list(HEATMAP_BREAKS)
-    print(f"  Breaks (m³/ha): {HEATMAP_NZ_BREAKS}")
-
-    HEATMAP_BY_MONTH = {}
+    nz_breaks = list(HEATMAP_BREAKS)
+    by_month = {}
     for month, odsek_targets in raw.items():
         buckets = {}
         for odsek, target in odsek_targets.items():
-            b = _assign_heatmap_bucket(target, HEATMAP_NZ_BREAKS)
+            b = _assign_heatmap_bucket(target, nz_breaks)
             if b > 0:
                 buckets[odsek] = b
-        HEATMAP_BY_MONTH[month] = buckets
+        by_month[month] = buckets
 
     print(
-        f"Heatmap loaded: {len(HEATMAP_MONTHS)} months "
-        f"(forecast from {FORECAST_START_MONTH or 'n/a'}), "
-        f"{sum(len(v) for v in HEATMAP_BY_MONTH.values())} non-zero entries"
+        f"Heatmap ({label}): {len(months)} months "
+        f"(forecast from {forecast_start or 'n/a'}), "
+        f"{sum(len(v) for v in by_month.values())} non-zero entries"
     )
+    return months, nz_breaks, by_month, abs_by_month, forecast_start
 
 
+def load_heatmap_data_synthetic():
+    global HEATMAP_MONTHS_SYN, HEATMAP_NZ_BREAKS_SYN, HEATMAP_BY_MONTH_SYN
+    global HEATMAP_ABS_BY_MONTH_SYN, FORECAST_START_MONTH_SYN, GGE_HEATMAP_BY_MONTH_SYN
+
+    (HEATMAP_MONTHS_SYN,
+     HEATMAP_NZ_BREAKS_SYN,
+     HEATMAP_BY_MONTH_SYN,
+     HEATMAP_ABS_BY_MONTH_SYN,
+     FORECAST_START_MONTH_SYN) = _load_heatmap_dataset(
+         HEATMAP_PAST_DATA_PATH_SYN,
+         HEATMAP_FUTURE_DATA_PATH_SYN,
+         'synthetic'
+     )
+
+    if HEATMAP_ABS_BY_MONTH_SYN:
+        GGE_HEATMAP_BY_MONTH_SYN = _load_or_build_gge_cache(
+            (HEATMAP_PAST_DATA_PATH_SYN, HEATMAP_FUTURE_DATA_PATH_SYN),
+            GGE_HEATMAP_CACHE_PATH_SYN,
+            HEATMAP_ABS_BY_MONTH_SYN,
+            label='synthetic'
+        )
 
 
-def _build_gge_heatmap():
+def _build_gge_heatmap(abs_by_month=None):
     """Aggregate absolute heatmap targets by GGE per month → relative posek → bucket.
 
     Computes its own bucket breaks from GGE-level relative posek values, separate from
@@ -728,9 +779,11 @@ def _build_gge_heatmap():
     is narrower — shared breaks with odsek would crush most GGEs into bucket 1.
     Only odseki present in odseki.csv (with a known GGE and area) are counted.
     """
+    if abs_by_month is None:
+        abs_by_month = HEATMAP_ABS_BY_MONTH
     # First pass: sum absolute targets per (gge, month) across all months
     gge_relatives = {}   # {month: {gge: relative_posek}}
-    for month, abs_data in HEATMAP_ABS_BY_MONTH.items():
+    for month, abs_data in abs_by_month.items():
         target_sum = defaultdict(float)
         for odsek_id, target_abs in abs_data.items():
             gge = ODSEK_TO_GGE.get(odsek_id)
@@ -760,45 +813,49 @@ def _build_gge_heatmap():
     return gge_by_month
 
 
-def _load_or_build_gge_cache():
-    """Load GGE heatmap from cache if both heatmap source files are older than it.
-    Rebuilds and saves cache when sources are newer.
-    """
-    global GGE_HEATMAP_BY_MONTH
+def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
+    """Load GGE heatmap from cache or rebuild it.
 
-    # Newest mtime among the source heatmap files
+    Returns the {month: {gge: bucket}} dict.
+    src_paths: iterable of Paths used as source mtime reference.
+    cache_path: Path to the JSON cache file.
+    abs_by_month: absolute heatmap data to build from if cache is stale.
+    label: short string for log messages (e.g. 'real' or 'synthetic').
+    """
     src_mtime = max(
         os.path.getmtime(p) if p.exists() else 0
-        for p in (HEATMAP_PAST_DATA_PATH, HEATMAP_FUTURE_DATA_PATH)
+        for p in src_paths
     )
 
-    if GGE_HEATMAP_CACHE_PATH.exists():
+    if cache_path.exists():
         try:
-            cache_mtime = os.path.getmtime(GGE_HEATMAP_CACHE_PATH)
+            cache_mtime = os.path.getmtime(cache_path)
             if cache_mtime >= src_mtime:
-                with GGE_HEATMAP_CACHE_PATH.open('r', encoding='utf-8') as f:
+                with cache_path.open('r', encoding='utf-8') as f:
                     raw = json.load(f)
                 if raw.get('_version') == _GGE_CACHE_VERSION:
-                    GGE_HEATMAP_BY_MONTH = {k: v for k, v in raw.items() if not k.startswith('_')}
-                    print(f"GGE heatmap loaded from cache ({len(GGE_HEATMAP_BY_MONTH)} months)")
-                    return
-                print("GGE cache version mismatch — rebuilding...")
+                    result = {k: v for k, v in raw.items() if not k.startswith('_')}
+                    print(f"GGE heatmap ({label}) loaded from cache ({len(result)} months)")
+                    return result
+                print(f"GGE cache ({label}) version mismatch — rebuilding...")
         except Exception as e:
-            print(f"GGE cache read failed ({e}) — rebuilding...")
+            print(f"GGE cache ({label}) read failed ({e}) — rebuilding...")
 
-    print("Building GGE heatmap aggregation...")
-    GGE_HEATMAP_BY_MONTH = _build_gge_heatmap()
-    print(f"GGE heatmap built: {len(GGE_HEATMAP_BY_MONTH)} months, "
-          f"{sum(len(v) for v in GGE_HEATMAP_BY_MONTH.values())} non-zero GGE entries")
+    print(f"Building GGE heatmap aggregation ({label})...")
+    result = _build_gge_heatmap(abs_by_month)
+    print(f"GGE heatmap ({label}) built: {len(result)} months, "
+          f"{sum(len(v) for v in result.values())} non-zero GGE entries")
 
     try:
-        out = dict(GGE_HEATMAP_BY_MONTH)
+        out = dict(result)
         out['_version'] = _GGE_CACHE_VERSION
-        with GGE_HEATMAP_CACHE_PATH.open('w', encoding='utf-8') as f:
+        with cache_path.open('w', encoding='utf-8') as f:
             json.dump(out, f, ensure_ascii=False)
-        print(f"GGE heatmap cached to {GGE_HEATMAP_CACHE_PATH.name}")
+        print(f"GGE heatmap ({label}) cached to {cache_path.name}")
     except Exception as e:
-        print(f"WARNING: Could not write GGE cache: {e}")
+        print(f"WARNING: Could not write GGE cache ({label}): {e}")
+
+    return result
 
 
 def _sanitize_static_path(request_path):
@@ -1011,10 +1068,12 @@ class TileHandler(BaseHTTPRequestHandler):
             odsek_id = _normalize_odsek_id(query_map.get('odsek', [''])[0])
             month    = query_map.get('month', [''])[0].strip()
             ggo_name = query_map.get('ggo',   [''])[0].strip()
+            dataset  = query_map.get('dataset', ['real'])[0].strip()
             if not odsek_id or not month:
                 self._send_json(400, {'error': 'Missing odsek or month'})
                 return
-            target_abs = (HEATMAP_ABS_BY_MONTH.get(month) or {}).get(odsek_id)
+            abs_src = HEATMAP_ABS_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_ABS_BY_MONTH
+            target_abs = (abs_src.get(month) or {}).get(odsek_id)
             # Use exact area for this (odsek, ggo) pair when available — falls back
             # to averaged area across GGOs if ggo is unknown or not in nazivi.
             record   = ODSEKI_BY_KEY.get((ggo_name, odsek_id)) if ggo_name else None
@@ -1043,20 +1102,31 @@ class TileHandler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/heatmap/meta':
-            self._send_json(200, {
-                'months':         HEATMAP_MONTHS,
-                'forecast_start': FORECAST_START_MONTH,
-                'nz_breaks':      HEATMAP_NZ_BREAKS,
-            })
+            query_map = parse_qs(parsed.query)
+            dataset = query_map.get('dataset', ['real'])[0].strip()
+            if dataset == 'synthetic':
+                self._send_json(200, {
+                    'months':         HEATMAP_MONTHS_SYN,
+                    'forecast_start': FORECAST_START_MONTH_SYN,
+                    'nz_breaks':      HEATMAP_NZ_BREAKS_SYN,
+                })
+            else:
+                self._send_json(200, {
+                    'months':         HEATMAP_MONTHS,
+                    'forecast_start': FORECAST_START_MONTH,
+                    'nz_breaks':      HEATMAP_NZ_BREAKS,
+                })
             return
 
         if path == '/api/heatmap':
             query_map = parse_qs(parsed.query)
             month = query_map.get('month', [''])[0].strip()
+            dataset = query_map.get('dataset', ['real'])[0].strip()
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            buckets = HEATMAP_BY_MONTH.get(month)
+            by_month_src = HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_BY_MONTH
+            buckets = by_month_src.get(month)
             if buckets is None:
                 self._send_json(404, {'error': f'No heatmap data for {month}'})
                 return
@@ -1102,10 +1172,12 @@ class TileHandler(BaseHTTPRequestHandler):
         if path == '/api/heatmap/gge':
             query_map = parse_qs(parsed.query)
             month = query_map.get('month', [''])[0].strip()
+            dataset = query_map.get('dataset', ['real'])[0].strip()
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            buckets = GGE_HEATMAP_BY_MONTH.get(month)
+            gge_src = GGE_HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else GGE_HEATMAP_BY_MONTH
+            buckets = gge_src.get(month)
             if buckets is None:
                 self._send_json(404, {'error': f'No GGE heatmap data for {month}'})
                 return
@@ -1193,7 +1265,7 @@ def main():
     load_odseki_data()
     load_gge_area_data()
     load_heatmap_data()
-    _load_or_build_gge_cache()
+    load_heatmap_data_synthetic()
 
     global ODSEK_BBOX, ODSEKI_BY_GGO
     ODSEK_BBOX = _load_or_build_bbox_index(ODSEKI_MBTILES_FILE, zoom=11)

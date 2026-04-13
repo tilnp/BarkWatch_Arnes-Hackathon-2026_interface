@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove the is_a_prediction column from a CSV file, saving to a new file."""
+"""Remove the is_a_prediction column from a CSV file."""
 
 import sys
 from pathlib import Path
@@ -15,6 +15,6 @@ for path in sys.argv[1:]:
     if "is_a_prediction" not in df.columns:
         print(f"SKIP {path} — column 'is_a_prediction' not found")
         continue
-    out = p.with_name(p.stem + "_" + p.suffix)
+    out = p.with_name(p.stem + p.suffix)
     df.drop(columns=["is_a_prediction"]).to_csv(out, index=False)
     print(f"OK   {path} -> {out.name}")

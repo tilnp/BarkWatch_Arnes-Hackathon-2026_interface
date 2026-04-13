@@ -3,8 +3,6 @@
 
 Usage:
     python drop_zero_rows.py <column> <file.csv> [file2.csv ...]
-
-Output is saved alongside the original with _no_zeros appended to the stem.
 """
 
 import sys
@@ -29,6 +27,6 @@ for path in sys.argv[2:]:
     df_filtered = df[pd.to_numeric(df[column], errors="coerce").fillna(0) != 0]
     dropped = before - len(df_filtered)
 
-    out = p.with_name(p.stem + "_no_zeros" + p.suffix)
+    out = p.with_name(p.stem + p.suffix)
     df_filtered.to_csv(out, index=False)
     print(f"OK   {p.name} → {out.name}  (dropped {dropped:,} / {before:,} rows)")

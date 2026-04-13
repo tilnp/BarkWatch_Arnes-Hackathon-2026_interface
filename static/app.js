@@ -313,6 +313,28 @@ const heatmapCache = new Map();
 const ggeCache = new Map();
 const HEATMAP_CACHE_LIMIT = 30;
 
+// Dataset toggle: 'real' | 'synthetic'
+let currentDataset = 'real';
+const datasetBtnReal      = document.getElementById('dataset-btn-real');
+const datasetBtnSynthetic = document.getElementById('dataset-btn-synthetic');
+
+function setDataset(dataset) {
+    if (dataset === currentDataset) return;
+    // Remember current month string so we can restore it after switching datasets
+    const preservedMonth = currentMonthString();
+    currentDataset = dataset;
+    datasetBtnReal.classList.toggle('dataset-btn-active', dataset === 'real');
+    datasetBtnSynthetic.classList.toggle('dataset-btn-active', dataset === 'synthetic');
+    // Clear caches so next render fetches fresh data for the new dataset
+    heatmapCache.clear();
+    ggeCache.clear();
+    // Reload slider range and colours, restoring the previously viewed month if possible
+    initHeatmap(preservedMonth).catch(console.error);
+}
+
+datasetBtnReal.addEventListener('click', () => setDataset('real'));
+datasetBtnSynthetic.addEventListener('click', () => setDataset('synthetic'));
+
 // Trenutno izbran odsek (za posodabljanje poseka ob spremembi meseca)
 let selectedOdsekId = '';
 
@@ -427,7 +449,7 @@ async function applyMonthColor() {
     let buckets = heatmapCache.get(m);
     if (!buckets) {
         try {
-            const resp = await fetch(`/api/heatmap?month=${encodeURIComponent(m)}`);
+            const resp = await fetch(`/api/heatmap?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
             if (!resp.ok) return;
             buckets = await resp.json();
             if (heatmapCache.size >= HEATMAP_CACHE_LIMIT) {
@@ -450,7 +472,7 @@ async function applyMonthColor() {
     let ggeBuckets = ggeCache.get(m);
     if (!ggeBuckets) {
         try {
-            const ggeResp = await fetch(`/api/heatmap/gge?month=${encodeURIComponent(m)}`);
+            const ggeResp = await fetch(`/api/heatmap/gge?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
             if (ggeResp.ok) {
                 ggeBuckets = await ggeResp.json();
                 if (ggeCache.size >= HEATMAP_CACHE_LIMIT) {
@@ -472,7 +494,7 @@ async function fetchAndShowHeatmapValue(odsekId, month, ggoName = '') {
     try {
         const ggoParam = ggoName ? `&ggo=${encodeURIComponent(ggoName)}` : '';
         const resp = await fetch(
-            `/api/heatmap/value?odsek=${encodeURIComponent(odsekId)}&month=${encodeURIComponent(month)}${ggoParam}`
+            `/api/heatmap/value?odsek=${encodeURIComponent(odsekId)}&month=${encodeURIComponent(month)}${ggoParam}&dataset=${currentDataset}`
         );
         if (!resp.ok) { heatmapInfoEl.classList.add('hidden'); return; }
         const data = await resp.json();
@@ -508,9 +530,9 @@ function renderHeatmapValue(data, month) {
         `<div class="posek-relative">${relStr}</div>`;
 }
 
-async function initHeatmap() {
+async function initHeatmap(preserveMonth = '') {
     try {
-        const resp = await fetch('/api/heatmap/meta');
+        const resp = await fetch(`/api/heatmap/meta?dataset=${currentDataset}`);
         if (!resp.ok) return;
         const meta = await resp.json();
         heatmapMonths = meta.months || [];
@@ -520,11 +542,26 @@ async function initHeatmap() {
         monthSlider.min = '0';
         monthSlider.max = String(heatmapMonths.length - 1);
 
-        // Privzeto: zadnji mesec pred napovedmi
-        let defaultIdx = heatmapMonths.length - 1;
-        if (forecastStartMonth) {
-            const fIdx = heatmapMonths.indexOf(forecastStartMonth);
-            if (fIdx > 0) defaultIdx = fIdx - 1;
+        let defaultIdx;
+        if (preserveMonth) {
+            // Try to land on the same calendar month after switching datasets
+            const exactIdx = heatmapMonths.indexOf(preserveMonth);
+            if (exactIdx >= 0) {
+                defaultIdx = exactIdx;
+            } else {
+                // Find the closest month that is <= preserveMonth
+                const before = heatmapMonths.filter(m => m <= preserveMonth);
+                defaultIdx = before.length
+                    ? heatmapMonths.indexOf(before[before.length - 1])
+                    : 0;
+            }
+        } else {
+            // Privzeto: zadnji mesec pred napovedmi
+            defaultIdx = heatmapMonths.length - 1;
+            if (forecastStartMonth) {
+                const fIdx = heatmapMonths.indexOf(forecastStartMonth);
+                if (fIdx > 0) defaultIdx = fIdx - 1;
+            }
         }
         monthSlider.value = String(defaultIdx);
         updateMonthLabel();
