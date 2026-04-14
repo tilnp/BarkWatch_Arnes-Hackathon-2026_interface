@@ -31,7 +31,7 @@ BarkWatch ingests historical forest harvest data (*posek*), feeds it into an off
                          │ HTTP REST (GET + JSON)
                          │ Vector tiles (MVT / protobuf)
 ┌────────────────────────▼─────────────────────────────────┐
-│              run_web_server.py  (Python 3 stdlib)        │
+│                 server.py  (Python 3 stdlib)             │
 │                                                          │
 │  HTTPServer on :8000                                     │
 │  ├── Static file server  (/, /static/*)                  │
@@ -68,7 +68,7 @@ BarkWatch ingests historical forest harvest data (*posek*), feeds it into an off
 
 ```
 BarkWatch_Arnes-Hackathon-2026_interface/
-├── run_web_server.py
+├── server.py
 ├── static/
 │   ├── index.html                   # Main application page
 │   ├── landing.html                 # Landing page
@@ -102,7 +102,7 @@ BarkWatch_Arnes-Hackathon-2026_interface/
 ## Running locally
 
 ```bash
-python3 run_web_server.py
+python3 server.py
 # Open http://localhost:8000
 ```
 
@@ -117,7 +117,7 @@ git lfs pull
 
 ---
 
-## Backend (run_web_server.py)
+## Backend (server.py)
 
 ### Startup sequence
 

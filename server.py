@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MBTiles viewer using MapLibre GL JS.
-Run with: python3 run_web_server.py
+Run with: python3 server.py
 Then open http://localhost:8000 in your browser.
 """
 
