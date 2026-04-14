@@ -820,12 +820,12 @@ async function openAnalysisModal() {
                                 const isSyn = currentDataset === 'synthetic';
                                 const abs = s.has_data
                                     ? isSyn
-                                        ? `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} podlubnikov`
+                                        ? `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} podlubnik/m²`
                                         : `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} m³`
                                     : 'Ni podatkov';
                                 const rel = s.relative != null
                                     ? isSyn
-                                        ? `  (${s.relative.toLocaleString('sl-SI', { maximumFractionDigits: 4 })} podlubnik/m²)`
+                                        ? ''
                                         : `  (${s.relative.toLocaleString('sl-SI', { maximumFractionDigits: 4 })} m³/ha)`
                                     : '';
                                 return abs + rel;
@@ -847,7 +847,7 @@ async function openAnalysisModal() {
                     },
                     y: {
                         beginAtZero: true,
-                        title: { display: true, text: currentDataset === 'synthetic' ? 'Število podlubnikov' : 'Posek (m³)', font: { size: 11 } },
+                        title: { display: true, text: currentDataset === 'synthetic' ? 'Število podlubnikov (podlubnik/m²)' : 'Posek (m³)', font: { size: 11 } },
                         grid: { color: 'rgba(0,0,0,0.06)' },
                         ticks: { font: { size: 11 } }
                     }
