@@ -759,8 +759,13 @@ h1 .watch { color: #166534; }
     padding: 0;
 }
 
-.map-ctrl-btn:hover {
+.map-ctrl-btn:hover:not(:disabled) {
     background: #f0f0f0;
+}
+
+.map-ctrl-btn:disabled {
+    color: #bbb;
+    cursor: default;
 }
 
 /* ── Help modal ─────────────────────────────────────────────────── */

@@ -5,6 +5,9 @@ const INITIAL_ZOOM = 8;
 // Increase to keep GGE visible longer when zooming in; decrease to switch earlier.
 const GGE_TO_ODSEK_ZOOM = 11;
 
+// Maximum number of map-position history entries for back/forward navigation.
+const MAX_HISTORY = 20;
+
 // Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
 const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640, pitch: 2800 };
 const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450, pitch: 1500 };
@@ -193,7 +196,7 @@ const map = new maplibregl.Map({
                 type: 'fill',
                 source: 'odseki',
                 'source-layer': 'odseki_map_ggo_gge',
-                filter: ['==', ['get', 'odsek'], ''],
+                filter: ['==', ['literal', false], true],
                 paint: {
                     'fill-color': '#2563eb',
                     'fill-opacity': 0.25
@@ -204,7 +207,7 @@ const map = new maplibregl.Map({
                 type: 'line',
                 source: 'odseki',
                 'source-layer': 'odseki_map_ggo_gge',
-                filter: ['==', ['get', 'odsek'], ''],
+                filter: ['==', ['literal', false], true],
                 paint: {
                     'line-color': '#2563eb',
                     'line-width': 5,
@@ -267,6 +270,112 @@ map.addControl({
         });
 
         this._container.appendChild(btn);
+        return this._container;
+    },
+    onRemove() { this._container.parentNode.removeChild(this._container); }
+}, 'top-right');
+
+// ── Map position history (back / forward) ────────────────────────
+let _mapHistory = [];
+let _histIdx    = -1;
+let _navHistory = false; // true while animating through history — suppresses recording
+
+function _snapNow() {
+    return {
+        center:  map.getCenter().toArray(),
+        zoom:    map.getZoom(),
+        bearing: map.getBearing(),
+        pitch:   map.getPitch(),
+        odsekId:    selectedOdsekId,
+        ggoName:    selectedGgoName(),
+        ggeName:    _selectedGgeName,
+        ggeGgoName: _selectedGgeGgoName,
+    };
+}
+
+function _pushInitialSnap() {
+    const snap = {
+        center:  SLOVENIA_CENTER,
+        zoom:    INITIAL_ZOOM,
+        bearing: 0,
+        pitch:   0,
+        odsekId: '',
+        ggoName: '',
+    };
+    _mapHistory = [snap];
+    _histIdx = 0;
+    _updateHistBtns();
+}
+
+function _restoreSnap(s) {
+    _navHistory = true;
+    if (s.odsekId) {
+        if (s.ggoName) ggoSelect.value = s.ggoName;
+        setSearchEnabled(Boolean(s.ggoName));
+        selectOdsek(s.odsekId, 'panel', s.ggoName || null, { bearing: s.bearing, pitch: s.pitch })
+            .catch(console.error)
+            .finally(() => {
+                map.once('moveend', () => { _navHistory = false; });
+            });
+    } else {
+        map.easeTo({ center: s.center, zoom: s.zoom, bearing: s.bearing, pitch: s.pitch, duration: ANIM.manual });
+        map.once('moveend', () => {
+            _navHistory = false;
+            clearHighlight();
+            if (s.ggeName) setGgeHighlight(s.ggeGgoName || null, s.ggeName);
+            if (!s.ggoName) ggoSelect.value = '';
+        });
+    }
+}
+
+let _histBtnBack, _histBtnFwd;
+function _updateHistBtns() {
+    if (!_histBtnBack) return;
+    _histBtnBack.disabled = _histIdx <= 0;
+    _histBtnFwd.disabled  = _histIdx >= _mapHistory.length - 1;
+}
+
+map.on('moveend', () => {
+    if (_navHistory) return;
+    const snap = _snapNow();
+    _mapHistory = _mapHistory.slice(0, _histIdx + 1);
+    _mapHistory.push(snap);
+    if (_mapHistory.length > MAX_HISTORY) { _mapHistory.shift(); }
+    _histIdx = _mapHistory.length - 1;
+    _updateHistBtns();
+});
+
+map.addControl({
+    onAdd() {
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+
+        _histBtnBack = document.createElement('button');
+        _histBtnBack.className = 'map-ctrl-btn';
+        _histBtnBack.title = 'Nazaj';
+        _histBtnBack.innerHTML = '←';
+        _histBtnBack.disabled = true;
+        _histBtnBack.addEventListener('click', () => {
+            if (_histIdx <= 0) return;
+            _histIdx--;
+            _restoreSnap(_mapHistory[_histIdx]);
+            _updateHistBtns();
+        });
+
+        _histBtnFwd = document.createElement('button');
+        _histBtnFwd.className = 'map-ctrl-btn';
+        _histBtnFwd.title = 'Naprej';
+        _histBtnFwd.innerHTML = '→';
+        _histBtnFwd.disabled = true;
+        _histBtnFwd.addEventListener('click', () => {
+            if (_histIdx >= _mapHistory.length - 1) return;
+            _histIdx++;
+            _restoreSnap(_mapHistory[_histIdx]);
+            _updateHistBtns();
+        });
+
+        this._container.appendChild(_histBtnBack);
+        this._container.appendChild(_histBtnFwd);
         return this._container;
     },
     onRemove() { this._container.parentNode.removeChild(this._container); }
@@ -1077,10 +1186,10 @@ function findBoundsInLoadedTiles(odsekId, ggoCode, ggoName) {
     return bbox;
 }
 
-function fitToBbox(bbox) {
+function fitToBbox(bbox, cameraOpts = {}) {
     map.fitBounds(
         [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-        { padding: 70, duration: ANIM.panel, maxZoom: 14 }
+        { padding: 70, duration: ANIM.panel, maxZoom: 14, ...cameraOpts }
     );
 }
 
@@ -1143,18 +1252,18 @@ async function sweepForOdsekBbox(odsekId, ggoCode, ggoName, animateSweep) {
     return null;
 }
 
-async function locateOdsek(odsekId, ggoCode, ggoName, mode = 'panel') {
+async function locateOdsek(odsekId, ggoCode, ggoName, mode = 'panel', cameraOpts = {}) {
     const animatePanelSwitch = mode === 'panel';
 
     let bbox = await sweepForOdsekBbox(odsekId, ggoCode, ggoName, animatePanelSwitch);
     if (!bbox) return false;
 
     if (animatePanelSwitch) {
-        fitToBbox(bbox);
+        fitToBbox(bbox, cameraOpts);
     } else {
         map.fitBounds(
             [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-            { padding: 70, duration: ANIM.manual, maxZoom: 14 }
+            { padding: 70, duration: ANIM.manual, maxZoom: 14, ...cameraOpts }
         );
     }
 
@@ -1241,7 +1350,7 @@ async function fetchOdsekById(odsekId) {
 
 let _highlightReqId = 0;
 
-const NEVER_MATCH = ['==', ['get', 'odsek'], ''];
+const NEVER_MATCH = ['==', ['literal', false], true];
 
 function _applyFilter(f) {
     if (HIGHLIGHT_SELECTED_ODSEK_BACKGROUND) {
@@ -1252,7 +1361,12 @@ function _applyFilter(f) {
 
 const _GGE_NEVER_MATCH = ['==', ['literal', false], true];
 
+let _selectedGgeName    = '';
+let _selectedGgeGgoName = '';
+
 function setGgeHighlight(ggoName, ggeName) {
+    _selectedGgeName    = ggeName  || '';
+    _selectedGgeGgoName = ggoName  || '';
     let filter;
     if (ggoName && ggeName) {
         filter = ['all',
@@ -1365,7 +1479,7 @@ function setHighlight(odsekId, ggoName) {
  * @param {'panel'|'manual'} source
  * @param {string|null} ggoNameOverride  - GGO name detected from tile props (overrides dropdown)
  */
-async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
+async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, cameraOpts = {}) {
     // Canonical form (zeros) for API lookups; display form (spaces) for tile filters and UI.
     const cleanId = canonicalOdsekId(odsekId);
     if (!cleanId) return;
@@ -1402,6 +1516,8 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
         String(payload.data.gge_naziv || '').trim()
     );
 
+    if (source === 'history') return;
+
     const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
 
     // Pre-apply odsek view immediately so tiles start loading during the flight animation.
@@ -1427,7 +1543,7 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
                     Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])];
         }
         if (Number.isFinite(bbox[0])) {
-            map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration, maxZoom: 14 });
+            map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration, maxZoom: 14, ...cameraOpts });
             return;
         }
     }
@@ -1435,13 +1551,13 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     // 2. Bbox from server — fly there.
     if (payload.bbox) {
         const b = payload.bbox;
-        map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 70, duration, maxZoom: 14 });
+        map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 70, duration, maxZoom: 14, ...cameraOpts });
         return;
     }
 
     // 3. Fallback: tile sweep — tiles use display form (spaces).
     const ggoCode = String(payload.key?.ggo_code || selectedGgoCode() || '').trim();
-    const moved = await locateOdsek(displayId, ggoCode, ggoName, source);
+    const moved = await locateOdsek(displayId, ggoCode, ggoName, source, cameraOpts);
     if (!moved) {
         console.warn('Odsek location could not be resolved:', displayId, ggoName);
     }
@@ -1541,7 +1657,7 @@ const SLOVENIA_MAX_BOUNDS = [[12.0, 44.8], [17.8, 47.5]];
 
 map.on('load', () => {
     map.setMaxBounds(SLOVENIA_MAX_BOUNDS);
-
+    _pushInitialSnap();
     initHeatmap().catch(console.error);
 });
 
