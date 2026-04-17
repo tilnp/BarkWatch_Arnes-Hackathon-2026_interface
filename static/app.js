@@ -1503,6 +1503,7 @@ function setHighlight(odsekId, ggoName) {
  * @param {string|null} ggoNameOverride  - GGO name detected from tile props (overrides dropdown)
  */
 async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, cameraOpts = {}) {
+    cameraOpts = { bearing: map.getBearing(), pitch: map.getPitch(), ...cameraOpts };
     // Canonical form (zeros) for API lookups; display form (spaces) for tile filters and UI.
     const cleanId = canonicalOdsekId(odsekId);
     if (!cleanId) return;
