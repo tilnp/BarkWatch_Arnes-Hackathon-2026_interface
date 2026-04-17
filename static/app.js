@@ -677,8 +677,13 @@ const ggoSelect = (() => {
 const searchInput = document.getElementById('odsek-search');
 const searchBtn = document.getElementById('search-btn');
 const suggestionsEl = document.getElementById('suggestions');
-const selectedOdsekEl = document.getElementById('selected-odsek');
-const detailsEl = document.getElementById('odsek-details');
+const selectedOdsekEl   = document.getElementById('selected-odsek');
+const detailsEl         = document.getElementById('odsek-details');
+const deselectOdsekBtn  = document.getElementById('deselect-odsek-btn');
+deselectOdsekBtn.addEventListener('click', () => clearHighlight());
+function _updateDeselectBtn() {
+    deselectOdsekBtn.classList.toggle('hidden', !selectedOdsekId);
+}
 const monthSlider = document.getElementById('month-slider');
 const monthLabel  = document.getElementById('month-label');
 const monthPrev   = document.getElementById('month-prev');
@@ -826,6 +831,7 @@ function setSearchEnabled(enabled) {
 
     if (enabled) {
         searchInput.placeholder = 'npr. 31001';
+        deselectOdsekBtn.classList.add('hidden');
     } else {
         searchInput.placeholder = 'Najprej izberite GGO';
         searchInput.value = '';
@@ -1550,6 +1556,7 @@ function clearHighlight() {
     selectedOdsekId       = '';
     _selectedOdsekGgoName = '';
     _selectedOdsekGgoKey  = 'ggo_naziv';
+    _updateDeselectBtn();
     _updateZoomVisibility(map.getZoom());
     heatmapInfoEl.classList.add('hidden');
     selectedOdsekEl.textContent = 'Ni izbranega odseka.';
@@ -1679,6 +1686,7 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, ca
 
     selectedOdsekEl.textContent = `Izbran odsek: ${displayId} | GGO: ${ggoName}`;
     selectedOdsekId = cleanId;
+    _updateDeselectBtn();
     renderDetailsTable(payload.data);
     fetchAndShowHeatmapValue(cleanId, currentMonthString(), ggoName).catch(() => {});
 
@@ -2017,6 +2025,7 @@ function _onOdsekiFillClick(event) {
             searchInput.value = clickedOdsek;   // display form (spaces)
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
             selectedOdsekId = canonicalClicked;  // canonical form for API calls
+            _updateDeselectBtn();
             renderDetailsTable(payload.data);
             fetchAndShowHeatmapValue(canonicalClicked, currentMonthString(), fallbackGgoName).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);

@@ -286,9 +286,30 @@ h1 .watch { color: #166534; }
     border-color: #2aca67;
 }
 
+.info-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
 .info-block h2 {
     margin: 0;
     font-size: 1rem;
+}
+
+.deselect-odsek-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 5px;
+    font-size: 0.85rem;
+    color: #64748b;
+    border-radius: 4px;
+    line-height: 1;
+}
+.deselect-odsek-btn:hover {
+    background: #f1f5f9;
+    color: #1e293b;
 }
 
 .selected-odsek {
