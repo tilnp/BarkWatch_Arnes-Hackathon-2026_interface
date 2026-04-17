@@ -717,6 +717,13 @@ const heightCache = new Map();
 const ggeHeightCache = new Map();
 const HEATMAP_CACHE_LIMIT = 30;
 
+// Expression caches — keyed by month, cleared on dataset switch.
+// Avoids rebuilding large match[] arrays from cached data on revisit.
+const odsekColorExprCache  = new Map();
+const ggeColorExprCache    = new Map();
+const odsekHeightExprCache = new Map();
+const ggeHeightExprCache   = new Map();
+
 // Dataset toggle: 'real' | 'synthetic'
 let currentDataset = 'real';
 const datasetBtnReal      = document.getElementById('dataset-btn-real');
@@ -736,6 +743,10 @@ function setDataset(dataset) {
     ggeCache.clear();
     heightCache.clear();
     ggeHeightCache.clear();
+    odsekColorExprCache.clear();
+    ggeColorExprCache.clear();
+    odsekHeightExprCache.clear();
+    ggeHeightExprCache.clear();
     // Reload slider range and colours, restoring the previously viewed month if possible
     initHeatmap(preservedMonth).catch(console.error);
 }
@@ -868,6 +879,16 @@ function buildHeatmapExpression(buckets, key = 'odsek') {
     return args;
 }
 
+function buildGgeColorExpression(ggeBuckets) {
+    const ggeKeyExpr = ['concat', ['get', 'ggo_naziv'], '\x00', ['get', 'gge_naziv']];
+    const args = ['match', ggeKeyExpr];
+    for (const [id, bucket] of Object.entries(ggeBuckets)) {
+        args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
+    }
+    args.push(HEATMAP_COLORS[0]);
+    return args;
+}
+
 function buildHeightExpression(heights, key, globalMax) {
     const args = ['match', ['to-string', ['get', key]]];
     for (const [id, value] of Object.entries(heights)) {
@@ -918,12 +939,23 @@ function _applyHeightsForMonth(m) {
     if (!_map3dMode || !m) return;
     const heights = heightCache.get(m);
     if (heights && map.getLayer('odseki-fill')) {
-        map.setPaintProperty('odseki-fill', 'fill-extrusion-height',
-            buildHeightExpression(heights, 'odsek', heatmapHeightMax));
+        let expr = odsekHeightExprCache.get(m);
+        if (!expr) {
+            expr = buildHeightExpression(heights, 'odsek', heatmapHeightMax);
+            if (odsekHeightExprCache.size >= HEATMAP_CACHE_LIMIT) odsekHeightExprCache.delete(odsekHeightExprCache.keys().next().value);
+            odsekHeightExprCache.set(m, expr);
+        }
+        map.setPaintProperty('odseki-fill', 'fill-extrusion-height', expr);
     }
     const ggeHeights = ggeHeightCache.get(m);
     if (ggeHeights && map.getLayer('gge-fill')) {
-        map.setPaintProperty('gge-fill', 'fill-extrusion-height', _buildGgeHeightExpression(ggeHeights));
+        let expr = ggeHeightExprCache.get(m);
+        if (!expr) {
+            expr = _buildGgeHeightExpression(ggeHeights);
+            if (ggeHeightExprCache.size >= HEATMAP_CACHE_LIMIT) ggeHeightExprCache.delete(ggeHeightExprCache.keys().next().value);
+            ggeHeightExprCache.set(m, expr);
+        }
+        map.setPaintProperty('gge-fill', 'fill-extrusion-height', expr);
     }
 }
 
@@ -944,7 +976,12 @@ async function applyMonthColor() {
                 heatmapCache.set(m, buckets);
             } catch (e) { console.error('Heatmap fetch failed:', m, e); return; }
         }
-        const odsekColorExpr = buildHeatmapExpression(buckets);
+        let odsekColorExpr = odsekColorExprCache.get(m);
+        if (!odsekColorExpr) {
+            odsekColorExpr = buildHeatmapExpression(buckets);
+            if (odsekColorExprCache.size >= HEATMAP_CACHE_LIMIT) odsekColorExprCache.delete(odsekColorExprCache.keys().next().value);
+            odsekColorExprCache.set(m, odsekColorExpr);
+        }
         if (map.getLayer('odseki-fill'))      map.setPaintProperty('odseki-fill',      'fill-extrusion-color', odsekColorExpr);
         if (map.getLayer('odseki-fill-flat')) map.setPaintProperty('odseki-fill-flat', 'fill-color',           odsekColorExpr);
         if (selectedOdsekId) fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
@@ -966,14 +1003,14 @@ async function applyMonthColor() {
         if (ggeBuckets) {
             // Tiles now carry ggo_naziv — use compound key ggo\x00gge so same-name GGEs in
             // different GGOs receive their own correct bucket colour.
-            const ggeKeyExpr = ['concat', ['get', 'ggo_naziv'], '\x00', ['get', 'gge_naziv']];
-            const args = ['match', ggeKeyExpr];
-            for (const [id, bucket] of Object.entries(ggeBuckets)) {
-                args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
+            let ggeColorExpr = ggeColorExprCache.get(m);
+            if (!ggeColorExpr) {
+                ggeColorExpr = buildGgeColorExpression(ggeBuckets);
+                if (ggeColorExprCache.size >= HEATMAP_CACHE_LIMIT) ggeColorExprCache.delete(ggeColorExprCache.keys().next().value);
+                ggeColorExprCache.set(m, ggeColorExpr);
             }
-            args.push(HEATMAP_COLORS[0]);
-            if (map.getLayer('gge-fill'))      map.setPaintProperty('gge-fill',      'fill-extrusion-color', args);
-            if (map.getLayer('gge-fill-flat')) map.setPaintProperty('gge-fill-flat', 'fill-color',           args);
+            if (map.getLayer('gge-fill'))      map.setPaintProperty('gge-fill',      'fill-extrusion-color', ggeColorExpr);
+            if (map.getLayer('gge-fill-flat')) map.setPaintProperty('gge-fill-flat', 'fill-color',           ggeColorExpr);
         }
     })();
 

@@ -1094,6 +1094,25 @@ class TileHandler(BaseHTTPRequestHandler):
             except BrokenPipeError:
                 pass
 
+    def _serve_month_gz(self, key) -> bool:
+        """Serve a pre-gzipped JSON response from _MONTH_GZIP. Returns True on cache hit."""
+        if 'gzip' not in self.headers.get('Accept-Encoding', ''):
+            return False
+        body = _MONTH_GZIP.get(key)
+        if body is None:
+            return False
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Content-Encoding', 'gzip')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+        return True
+
     def _send_json(self, status_code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         if len(body) > 512 and 'gzip' in self.headers.get('Accept-Encoding', ''):
@@ -1353,10 +1372,11 @@ class TileHandler(BaseHTTPRequestHandler):
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            # Synthetic: serve raw bark-beetles/m² values (already area-normalised in source).
-            # Real: serve relative m³/ha (area-normalised by server).
-            src = HEATMAP_ABS_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_REL_BY_MONTH
-            self._send_json(200, src.get(month, {}))
+            if not self._serve_month_gz(('heights', month, dataset)):
+                # Synthetic: serve raw bark-beetles/m² values (already area-normalised in source).
+                # Real: serve relative m³/ha (area-normalised by server).
+                src = HEATMAP_ABS_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_REL_BY_MONTH
+                self._send_json(200, src.get(month, {}))
             return
 
         if path == '/api/heatmap/gge-heights':
@@ -1366,8 +1386,9 @@ class TileHandler(BaseHTTPRequestHandler):
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            src = GGE_RAW_BY_MONTH_SYN if dataset == 'synthetic' else GGE_REL_BY_MONTH
-            self._send_json(200, src.get(month, {}))
+            if not self._serve_month_gz(('gge-heights', month, dataset)):
+                src = GGE_RAW_BY_MONTH_SYN if dataset == 'synthetic' else GGE_REL_BY_MONTH
+                self._send_json(200, src.get(month, {}))
             return
 
         if path == '/api/heatmap':
@@ -1377,12 +1398,13 @@ class TileHandler(BaseHTTPRequestHandler):
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            by_month_src = HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_BY_MONTH
-            buckets = by_month_src.get(month)
-            if buckets is None:
-                self._send_json(404, {'error': f'No heatmap data for {month}'})
-                return
-            self._send_json(200, buckets)
+            if not self._serve_month_gz(('heatmap', month, dataset)):
+                by_month_src = HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_BY_MONTH
+                buckets = by_month_src.get(month)
+                if buckets is None:
+                    self._send_json(404, {'error': f'No heatmap data for {month}'})
+                    return
+                self._send_json(200, buckets)
             return
 
         if path.startswith('/api/odseki/'):
@@ -1428,17 +1450,18 @@ class TileHandler(BaseHTTPRequestHandler):
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            gge_src = GGE_HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else GGE_HEATMAP_BY_MONTH
-            compound_buckets = gge_src.get(month)
-            if compound_buckets is None:
-                self._send_json(404, {'error': f'No GGE heatmap data for {month}'})
-                return
-            # GGE tiles now carry ggo_naziv, so the frontend can match on the compound
-            # key ggo\x00gge (same separator as _GGE_KEY_SEP).  Return encoded keys
-            # directly — the frontend builds the concat expression to match them.
-            encoded = {_gge_key_encode(ggo, gge): bucket
-                       for (ggo, gge), bucket in compound_buckets.items()}
-            self._send_json(200, encoded)
+            if not self._serve_month_gz(('gge', month, dataset)):
+                # GGE tiles now carry ggo_naziv, so the frontend can match on the compound
+                # key ggo\x00gge (same separator as _GGE_KEY_SEP).  Return encoded keys
+                # directly — the frontend builds the concat expression to match them.
+                gge_src = GGE_HEATMAP_BY_MONTH_SYN if dataset == 'synthetic' else GGE_HEATMAP_BY_MONTH
+                compound_buckets = gge_src.get(month)
+                if compound_buckets is None:
+                    self._send_json(404, {'error': f'No GGE heatmap data for {month}'})
+                    return
+                encoded = {_gge_key_encode(ggo, gge): bucket
+                           for (ggo, gge), bucket in compound_buckets.items()}
+                self._send_json(200, encoded)
             return
 
         if path.startswith('/slo-tiles/'):
@@ -1515,6 +1538,10 @@ def _load_or_build_bbox_index(mbtiles_file: str | Path, zoom: int = 11) -> dict:
 _MBTILES_CONNS: dict = {}
 _MBTILES_RAM: dict = {}  # file path -> {(z, x, y_tms): tile_data}
 
+# Pre-gzipped JSON for the 4 hot per-month endpoints — built once at startup.
+# Key: ('heatmap' | 'heights' | 'gge' | 'gge-heights', month, 'real' | 'synthetic')
+_MONTH_GZIP: dict = {}
+
 def _get_mbtiles_conn(mbtiles_file):
     key = str(mbtiles_file)
     if key not in _MBTILES_CONNS:
@@ -1530,6 +1557,32 @@ def _load_mbtiles_into_ram(mbtiles_file):
     conn.close()
     _MBTILES_RAM[key] = {(z, x, y): bytes(data) for z, x, y, data in rows}
     print(f"Loaded {len(_MBTILES_RAM[key]):,} tiles from {Path(mbtiles_file).name}")
+
+
+def _build_month_gzip_cache():
+    """Pre-serialize and gzip all per-month heatmap API responses into _MONTH_GZIP."""
+    datasets = {
+        'real':      (HEATMAP_BY_MONTH,     HEATMAP_REL_BY_MONTH,    GGE_HEATMAP_BY_MONTH,     GGE_REL_BY_MONTH),
+        'synthetic': (HEATMAP_BY_MONTH_SYN, HEATMAP_ABS_BY_MONTH_SYN, GGE_HEATMAP_BY_MONTH_SYN, GGE_RAW_BY_MONTH_SYN),
+    }
+    total = 0
+    for dataset, (by_month, heights_src, gge_src, gge_h_src) in datasets.items():
+        for month, data in by_month.items():
+            _MONTH_GZIP[('heatmap', month, dataset)] = _gzip.compress(
+                json.dumps(data, ensure_ascii=False).encode(), compresslevel=1)
+        for month, data in heights_src.items():
+            _MONTH_GZIP[('heights', month, dataset)] = _gzip.compress(
+                json.dumps(data, ensure_ascii=False).encode(), compresslevel=1)
+        for month, compound_buckets in gge_src.items():
+            encoded = {_gge_key_encode(ggo, gge): bucket for (ggo, gge), bucket in compound_buckets.items()}
+            _MONTH_GZIP[('gge', month, dataset)] = _gzip.compress(
+                json.dumps(encoded, ensure_ascii=False).encode(), compresslevel=1)
+        for month, data in gge_h_src.items():
+            _MONTH_GZIP[('gge-heights', month, dataset)] = _gzip.compress(
+                json.dumps(data, ensure_ascii=False).encode(), compresslevel=1)
+        total += len(by_month) + len(heights_src) + len(gge_src) + len(gge_h_src)
+    size_mb = sum(len(v) for v in _MONTH_GZIP.values()) / 1_048_576
+    print(f"Pre-gzipped {total} month×endpoint responses ({size_mb:.1f} MB)")
 
 
 def main():
@@ -1554,6 +1607,7 @@ def main():
     load_gge_area_data()
     load_heatmap_data()
     load_heatmap_data_synthetic()
+    _build_month_gzip_cache()
 
     global ODSEK_BBOX, ODSEKI_BY_GGO
     ODSEK_BBOX = _load_or_build_bbox_index(ODSEKI_MBTILES_FILE, zoom=11)
