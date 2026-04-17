@@ -205,6 +205,18 @@ const map = new maplibregl.Map({
                 }
             },
             {
+                id: 'ggo-selected-outline',
+                type: 'line',
+                source: 'ggo',
+                'source-layer': 'ggo_maps',
+                filter: ['==', ['literal', false], true],
+                paint: {
+                    'line-color': '#fbbf24',
+                    'line-width': 6,
+                    'line-opacity': 1
+                }
+            },
+            {
                 id: 'gge-selected-fill',
                 type: 'fill',
                 source: 'gge',
@@ -223,19 +235,7 @@ const map = new maplibregl.Map({
                 filter: ['==', ['literal', false], true],
                 paint: {
                     'line-color': '#60cdee',
-                    'line-width': 2.5,
-                    'line-opacity': 1
-                }
-            },
-            {
-                id: 'ggo-selected-outline',
-                type: 'line',
-                source: 'ggo',
-                'source-layer': 'ggo_maps',
-                filter: ['==', ['literal', false], true],
-                paint: {
-                    'line-color': '#fbbf24',
-                    'line-width': 3.5,
+                    'line-width': 3,
                     'line-opacity': 1
                 }
             },
@@ -258,7 +258,7 @@ const map = new maplibregl.Map({
                 filter: ['==', ['literal', false], true],
                 paint: {
                     'line-color': '#2563eb',
-                    'line-width': 5,
+                    'line-width': 4,
                     'line-opacity': 1
                 }
             }
@@ -1781,6 +1781,9 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, ca
     selectedOdsekEl.textContent = `Izbran odsek: ${displayId} | GGO: ${ggoName}`;
     renderDetailsTable(payload.data);
     fetchAndShowHeatmapValue(cleanId, currentMonthString(), ggoName).catch(() => {});
+
+    if (ggoSelect.value !== ggoName) ggoSelect.value = ggoName;
+    setGgoHighlight(ggoName);
 
     setGgeHighlight(
         String(payload.data.ggo_naziv || ggoName || '').trim(),

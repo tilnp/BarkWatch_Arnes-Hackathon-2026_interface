@@ -1146,6 +1146,7 @@ class TileHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', mime_type)
             self.send_header('Content-Length', str(len(content)))
+            self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
             self.wfile.write(content)
         except Exception:
