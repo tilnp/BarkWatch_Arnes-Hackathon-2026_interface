@@ -93,26 +93,30 @@ const map = new maplibregl.Map({
             },
             {
                 id: 'gge-fill',
-                type: 'fill',
+                type: 'fill-extrusion',
                 source: 'gge',
                 'source-layer': 'gge_vektor',
                 layout: { visibility: INITIAL_ZOOM < GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
                 paint: {
-                    'fill-color': COLOR_ODSEKI_FILL,
-                    'fill-color-transition': { duration: 0, delay: 0 },
-                    'fill-opacity': 0.55
+                    'fill-extrusion-color': COLOR_ODSEKI_FILL,
+                    'fill-extrusion-color-transition': { duration: 0, delay: 0 },
+                    'fill-extrusion-opacity': 0.7,
+                    'fill-extrusion-height': 0,
+                    'fill-extrusion-base': 0
                 }
             },
             {
                 id: 'odseki-fill',
-                type: 'fill',
+                type: 'fill-extrusion',
                 source: 'odseki',
                 'source-layer': 'odseki_map_ggo_gge',
                 layout: { visibility: INITIAL_ZOOM >= GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
                 paint: {
-                    'fill-color': COLOR_ODSEKI_FILL,
-                    'fill-color-transition': { duration: 0, delay: 0 },
-                    'fill-opacity': 0.45
+                    'fill-extrusion-color': COLOR_ODSEKI_FILL,
+                    'fill-extrusion-color-transition': { duration: 0, delay: 0 },
+                    'fill-extrusion-opacity': 0.7,
+                    'fill-extrusion-height': 0,
+                    'fill-extrusion-base': 0
                 }
             },
             {
@@ -646,11 +650,20 @@ const monthPrev   = document.getElementById('month-prev');
 const monthNext   = document.getElementById('month-next');
 const heatmapInfoEl = document.getElementById('posek-info');
 
+// Max extrusion height in metres — tiles with the global-max value will reach this height.
+// GGE view is national scale (~425 m/px at zoom 8), odsek view is local scale (~53 m/px at zoom 11).
+const MAX_EXTRUSION_HEIGHT_GGE    = 150000;  // 150 km — clearly visible at national zoom
+const MAX_EXTRUSION_HEIGHT_ODSEK  =  30000;  // 30 km  — proportional at local zoom
+
 // Heatmap state (napolni initHeatmap)
 let heatmapMonths = [];
 let forecastStartMonth = '';
+let heatmapHeightMax = 1.0;
+let ggeHeightMax = 1.0;
 const heatmapCache = new Map();
 const ggeCache = new Map();
+const heightCache = new Map();
+const ggeHeightCache = new Map();
 const HEATMAP_CACHE_LIMIT = 30;
 
 // Dataset toggle: 'real' | 'synthetic'
@@ -670,6 +683,8 @@ function setDataset(dataset) {
     // Clear caches so next render fetches fresh data for the new dataset
     heatmapCache.clear();
     ggeCache.clear();
+    heightCache.clear();
+    ggeHeightCache.clear();
     // Reload slider range and colours, restoring the previously viewed month if possible
     initHeatmap(preservedMonth).catch(console.error);
 }
@@ -797,6 +812,16 @@ function buildHeatmapExpression(buckets, key = 'odsek') {
     return args;
 }
 
+function buildHeightExpression(heights, key, globalMax) {
+    const args = ['match', ['to-string', ['get', key]]];
+    for (const [id, value] of Object.entries(heights)) {
+        const h = Math.round((value / globalMax) * MAX_EXTRUSION_HEIGHT_ODSEK);
+        if (h > 0) args.push(id, h);
+    }
+    args.push(0);
+    return args;
+}
+
 function updateMonthLabel() {
     const m = currentMonthString();
     if (!m) { monthLabel.textContent = '–'; return; }
@@ -808,6 +833,46 @@ function updateMonthLabel() {
     const idx = Number(monthSlider.value);
     monthPrev.disabled = idx <= Number(monthSlider.min);
     monthNext.disabled = idx >= Number(monthSlider.max);
+}
+
+// 3D mode: heights are only visible and worth applying when the map is pitched.
+let _map3dMode = map.getPitch() > 1;
+
+map.on('pitch', () => {
+    const is3d = map.getPitch() > 1;
+    if (is3d !== _map3dMode) {
+        _map3dMode = is3d;
+        _applyHeightsForMonth(currentMonthString());
+    }
+});
+
+function _buildGgeHeightExpression(ggeHeights) {
+    const ggeKeyExpr = ['concat', ['get', 'ggo_naziv'], '\x00', ['get', 'gge_naziv']];
+    const args = ['match', ggeKeyExpr];
+    for (const [id, value] of Object.entries(ggeHeights)) {
+        const h = Math.round((value / ggeHeightMax) * MAX_EXTRUSION_HEIGHT_GGE);
+        if (h > 0) args.push(id, h);
+    }
+    args.push(0);
+    return args;
+}
+
+function _applyHeightsForMonth(m) {
+    if (!m) return;
+    if (!_map3dMode) {
+        if (map.getLayer('odseki-fill')) map.setPaintProperty('odseki-fill', 'fill-extrusion-height', 0);
+        if (map.getLayer('gge-fill'))    map.setPaintProperty('gge-fill',    'fill-extrusion-height', 0);
+        return;
+    }
+    const heights = heightCache.get(m);
+    if (heights && map.getLayer('odseki-fill')) {
+        map.setPaintProperty('odseki-fill', 'fill-extrusion-height',
+            buildHeightExpression(heights, 'odsek', heatmapHeightMax));
+    }
+    const ggeHeights = ggeHeightCache.get(m);
+    if (ggeHeights && map.getLayer('gge-fill')) {
+        map.setPaintProperty('gge-fill', 'fill-extrusion-height', _buildGgeHeightExpression(ggeHeights));
+    }
 }
 
 async function applyMonthColor() {
@@ -829,7 +894,7 @@ async function applyMonthColor() {
         }
     }
     if (map.getLayer('odseki-fill')) {
-        map.setPaintProperty('odseki-fill', 'fill-color', buildHeatmapExpression(buckets));
+        map.setPaintProperty('odseki-fill', 'fill-extrusion-color', buildHeatmapExpression(buckets));
     }
     if (selectedOdsekId) {
         fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
@@ -860,8 +925,35 @@ async function applyMonthColor() {
             args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
         }
         args.push(HEATMAP_COLORS[0]);
-        map.setPaintProperty('gge-fill', 'fill-color', args);
+        map.setPaintProperty('gge-fill', 'fill-extrusion-color', args);
     }
+
+    // Fetch and cache height data, then apply if in 3D mode
+    let heights = heightCache.get(m);
+    if (!heights) {
+        try {
+            const hResp = await fetch(`/api/heatmap/heights?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
+            if (hResp.ok) {
+                heights = await hResp.json();
+                if (heightCache.size >= HEATMAP_CACHE_LIMIT) heightCache.delete(heightCache.keys().next().value);
+                heightCache.set(m, heights);
+            }
+        } catch (e) { console.error('Height fetch failed:', m, e); }
+    }
+
+    let ggeHeights = ggeHeightCache.get(m);
+    if (!ggeHeights) {
+        try {
+            const ghResp = await fetch(`/api/heatmap/gge-heights?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
+            if (ghResp.ok) {
+                ggeHeights = await ghResp.json();
+                if (ggeHeightCache.size >= HEATMAP_CACHE_LIMIT) ggeHeightCache.delete(ggeHeightCache.keys().next().value);
+                ggeHeightCache.set(m, ggeHeights);
+            }
+        } catch (e) { console.error('GGE height fetch failed:', m, e); }
+    }
+
+    _applyHeightsForMonth(m);
 }
 
 async function fetchAndShowHeatmapValue(odsekId, month, ggoName = '') {
@@ -1048,6 +1140,8 @@ async function initHeatmap(preserveMonth = '') {
         const meta = await resp.json();
         heatmapMonths = meta.months || [];
         forecastStartMonth = meta.forecast_start || '';
+        heatmapHeightMax = meta.height_max || 1.0;
+        ggeHeightMax = meta.gge_height_max || 1.0;
         if (!heatmapMonths.length) return;
 
         monthSlider.min = '0';

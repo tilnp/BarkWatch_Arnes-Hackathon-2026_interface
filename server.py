@@ -144,6 +144,16 @@ GGE_HEATMAP_BY_MONTH_SYN = {}
 GGE_HEATMAP_CACHE_PATH_SYN = BASE_DIR / 'data' / 'gge_heatmap_cache_synthetic.json'
 _GGE_CACHE_VERSION = 7  # bumped: synthetic GGE now uses Q25/Q50/Q75 breaks
 
+# Height data: actual relative values (m³/ha) for 3D extrusion, normalised by global max
+HEATMAP_REL_BY_MONTH = {}       # {month: {odsek_id: relative m³/ha}}
+HEATMAP_REL_BY_MONTH_SYN = {}
+HEATMAP_HEIGHT_MAX = 1.0        # global max across all months (real), for 0-1 normalisation
+HEATMAP_HEIGHT_MAX_SYN = 1.0
+GGE_REL_BY_MONTH = {}           # {month: {encoded_gge_key: relative m³/ha}}
+GGE_REL_BY_MONTH_SYN = {}
+GGE_HEIGHT_MAX = 1.0
+GGE_HEIGHT_MAX_SYN = 1.0
+
 # GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
 # Unique GGE identifier is the pair (ggo_naziv, gge_naziv) — gge_naziv alone is not unique.
 ODSEK_TO_GGE = {}            # {odsek_id: (ggo_naziv, gge_naziv)}
@@ -665,19 +675,54 @@ def _read_heatmap_file(path):
     return raw, skipped_ggo
 
 
+def _p99(values):
+    """99th percentile of a list of floats — used to cap height normalization against outliers."""
+    if not values:
+        return 1.0
+    s = sorted(values)
+    idx = max(0, int(len(s) * 0.99) - 1)
+    return s[idx] or 1.0
+
+
+def _compute_gge_rel_by_month(abs_by_month):
+    """Compute relative m³/ha per GGE per month from odsek absolute data.
+    Returns {month: {encoded_gge_key: relative_value}}.
+    """
+    gge_rel = {}
+    for month, abs_data in abs_by_month.items():
+        gge_sums = defaultdict(float)
+        for odsek_id, abs_val in abs_data.items():
+            gge_key = ODSEK_TO_GGE.get(odsek_id)
+            if gge_key:
+                gge_sums[gge_key] += abs_val
+        month_rel = {}
+        for gge_key, total in gge_sums.items():
+            area = GGE_AREA.get(gge_key, 0)
+            relative = total / area if area > 0 else total
+            month_rel[_gge_key_encode(*gge_key)] = round(relative, 4)
+        gge_rel[month] = month_rel
+    return gge_rel
+
+
 def load_heatmap_data():
     global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, HEATMAP_ABS_BY_MONTH
     global FORECAST_START_MONTH, GGE_HEATMAP_BY_MONTH
+    global HEATMAP_REL_BY_MONTH, HEATMAP_HEIGHT_MAX, GGE_REL_BY_MONTH, GGE_HEIGHT_MAX
 
     (HEATMAP_MONTHS,
      HEATMAP_NZ_BREAKS,
      HEATMAP_BY_MONTH,
      HEATMAP_ABS_BY_MONTH,
-     FORECAST_START_MONTH) = _load_heatmap_dataset(
+     FORECAST_START_MONTH,
+     HEATMAP_REL_BY_MONTH) = _load_heatmap_dataset(
          HEATMAP_PAST_DATA_PATH,
          HEATMAP_FUTURE_DATA_PATH,
          'real'
      )
+
+    HEATMAP_HEIGHT_MAX = _p99(
+        [v for m in HEATMAP_REL_BY_MONTH.values() for v in m.values()]
+    )
 
     if HEATMAP_ABS_BY_MONTH:
         GGE_HEATMAP_BY_MONTH = _load_or_build_gge_cache(
@@ -685,6 +730,10 @@ def load_heatmap_data():
             GGE_HEATMAP_CACHE_PATH,
             HEATMAP_ABS_BY_MONTH,
             label='real'
+        )
+        GGE_REL_BY_MONTH = _compute_gge_rel_by_month(HEATMAP_ABS_BY_MONTH)
+        GGE_HEIGHT_MAX = _p99(
+            [v for m in GGE_REL_BY_MONTH.values() for v in m.values()]
         )
 
 
@@ -704,7 +753,7 @@ def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
     if not past_exists and not future_exists:
         print(f"WARNING ({label}): Neither heatmap file found "
               f"({past_path.name}, {future_path.name})")
-        return [], [], {}, {}, ''
+        return [], [], {}, {}, '', {}
 
     print(f"Loading heatmap data ({label})...")
     skipped_ggo = set()
@@ -804,23 +853,31 @@ def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
         f"(forecast from {forecast_start or 'n/a'}), "
         f"{sum(len(v) for v in by_month.values())} non-zero entries"
     )
-    return months, nz_breaks, by_month, abs_by_month, forecast_start
+    # `raw` now contains relative m³/ha values (after in-place area normalisation)
+    rel_by_month = {month: dict(vals) for month, vals in raw.items()}
+    return months, nz_breaks, by_month, abs_by_month, forecast_start, rel_by_month
 
 
 def load_heatmap_data_synthetic():
     global HEATMAP_MONTHS_SYN, HEATMAP_NZ_BREAKS_SYN, HEATMAP_BY_MONTH_SYN
     global HEATMAP_ABS_BY_MONTH_SYN, FORECAST_START_MONTH_SYN, GGE_HEATMAP_BY_MONTH_SYN
+    global HEATMAP_REL_BY_MONTH_SYN, HEATMAP_HEIGHT_MAX_SYN, GGE_REL_BY_MONTH_SYN, GGE_HEIGHT_MAX_SYN
 
     (HEATMAP_MONTHS_SYN,
      HEATMAP_NZ_BREAKS_SYN,
      HEATMAP_BY_MONTH_SYN,
      HEATMAP_ABS_BY_MONTH_SYN,
-     FORECAST_START_MONTH_SYN) = _load_heatmap_dataset(
+     FORECAST_START_MONTH_SYN,
+     HEATMAP_REL_BY_MONTH_SYN) = _load_heatmap_dataset(
          HEATMAP_PAST_DATA_PATH_SYN,
          HEATMAP_FUTURE_DATA_PATH_SYN,
          'synthetic',
          raw_breaks=HEATMAP_BREAKS_SYN
      )
+
+    HEATMAP_HEIGHT_MAX_SYN = _p99(
+        [v for m in HEATMAP_REL_BY_MONTH_SYN.values() for v in m.values()]
+    )
 
     if HEATMAP_ABS_BY_MONTH_SYN:
         GGE_HEATMAP_BY_MONTH_SYN = _load_or_build_gge_cache(
@@ -829,6 +886,10 @@ def load_heatmap_data_synthetic():
             HEATMAP_ABS_BY_MONTH_SYN,
             label='synthetic',
             raw_breaks=GGE_HEATMAP_BREAKS_SYN
+        )
+        GGE_REL_BY_MONTH_SYN = _compute_gge_rel_by_month(HEATMAP_ABS_BY_MONTH_SYN)
+        GGE_HEIGHT_MAX_SYN = _p99(
+            [v for m in GGE_REL_BY_MONTH_SYN.values() for v in m.values()]
         )
 
 
@@ -1245,13 +1306,39 @@ class TileHandler(BaseHTTPRequestHandler):
                     'months':         HEATMAP_MONTHS_SYN,
                     'forecast_start': FORECAST_START_MONTH_SYN,
                     'nz_breaks':      HEATMAP_NZ_BREAKS_SYN,
+                    'height_max':     HEATMAP_HEIGHT_MAX_SYN,
+                    'gge_height_max': GGE_HEIGHT_MAX_SYN,
                 })
             else:
                 self._send_json(200, {
                     'months':         HEATMAP_MONTHS,
                     'forecast_start': FORECAST_START_MONTH,
                     'nz_breaks':      HEATMAP_NZ_BREAKS,
+                    'height_max':     HEATMAP_HEIGHT_MAX,
+                    'gge_height_max': GGE_HEIGHT_MAX,
                 })
+            return
+
+        if path == '/api/heatmap/heights':
+            query_map = parse_qs(parsed.query)
+            month = query_map.get('month', [''])[0].strip()
+            dataset = query_map.get('dataset', ['real'])[0].strip()
+            if not month:
+                self._send_json(400, {'error': 'Missing month parameter'})
+                return
+            src = HEATMAP_REL_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_REL_BY_MONTH
+            self._send_json(200, src.get(month, {}))
+            return
+
+        if path == '/api/heatmap/gge-heights':
+            query_map = parse_qs(parsed.query)
+            month = query_map.get('month', [''])[0].strip()
+            dataset = query_map.get('dataset', ['real'])[0].strip()
+            if not month:
+                self._send_json(400, {'error': 'Missing month parameter'})
+                return
+            src = GGE_REL_BY_MONTH_SYN if dataset == 'synthetic' else GGE_REL_BY_MONTH
+            self._send_json(200, src.get(month, {}))
             return
 
         if path == '/api/heatmap':
