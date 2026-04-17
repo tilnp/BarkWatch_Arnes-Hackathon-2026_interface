@@ -282,7 +282,9 @@ map.addControl({
 // ── Map position history (back / forward) ────────────────────────
 let _mapHistory = [];
 let _histIdx    = -1;
-let _navHistory = false; // true while animating through history — suppresses recording
+let _navHistory       = false; // true while animating through history — suppresses recording
+let _dragSnapSuppress = false; // true while any mouse button is held
+let _pendingDragSnap  = false; // moveend fired during drag — push snap on mouseup
 
 function _snapNow() {
     return {
@@ -339,14 +341,31 @@ function _updateHistBtns() {
     _histBtnFwd.disabled  = _histIdx >= _mapHistory.length - 1;
 }
 
-map.on('moveend', () => {
-    if (_navHistory) return;
+function _pushSnap() {
     const snap = _snapNow();
     _mapHistory = _mapHistory.slice(0, _histIdx + 1);
     _mapHistory.push(snap);
-    if (_mapHistory.length > MAX_HISTORY) { _mapHistory.shift(); }
+    if (_mapHistory.length > MAX_HISTORY) _mapHistory.shift();
     _histIdx = _mapHistory.length - 1;
     _updateHistBtns();
+}
+
+map.on('moveend', () => {
+    if (_navHistory) return;
+    if (_dragSnapSuppress) { _pendingDragSnap = true; return; }
+    _pushSnap();
+});
+
+window.addEventListener('mousedown', () => {
+    _dragSnapSuppress = true;
+    _pendingDragSnap  = false;
+});
+window.addEventListener('mouseup', () => {
+    _dragSnapSuppress = false;
+    if (_pendingDragSnap && !_navHistory) {
+        _pendingDragSnap = false;
+        _pushSnap();
+    }
 });
 
 map.addControl({
