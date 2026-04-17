@@ -9,9 +9,9 @@ const GGE_TO_ODSEK_ZOOM = 11;
 const MAX_HISTORY = 30;
 
 // Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
-const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640, pitch: 2800 };
-const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450, pitch: 1500 };
-const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260, pitch: 700 };
+const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640, pitch: 2800, history: 1800 };
+const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450, pitch: 1500, history: 1000 };
+const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260, pitch: 700, history:  500 };
 
 let ANIM = ANIM_NORMAL;
 
@@ -318,13 +318,13 @@ function _restoreSnap(s) {
     if (s.odsekId) {
         if (s.ggoName) ggoSelect.value = s.ggoName;
         setSearchEnabled(Boolean(s.ggoName));
-        selectOdsek(s.odsekId, 'panel', s.ggoName || null, { bearing: s.bearing, pitch: s.pitch })
+        selectOdsek(s.odsekId, 'history', s.ggoName || null, { bearing: s.bearing, pitch: s.pitch })
             .catch(console.error)
             .finally(() => {
                 map.once('moveend', () => { _navHistory = false; });
             });
     } else {
-        map.easeTo({ center: s.center, zoom: s.zoom, bearing: s.bearing, pitch: s.pitch, duration: ANIM.manual });
+        map.easeTo({ center: s.center, zoom: s.zoom, bearing: s.bearing, pitch: s.pitch, duration: ANIM.history });
         map.once('moveend', () => {
             _navHistory = false;
             clearHighlight();
@@ -1212,7 +1212,7 @@ function findBoundsInLoadedTiles(odsekId, ggoCode, ggoName) {
 function fitToBbox(bbox, cameraOpts = {}) {
     map.fitBounds(
         [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-        { padding: 70, duration: ANIM.panel, maxZoom: 14, ...cameraOpts }
+        { padding: 70, maxZoom: 14, ...cameraOpts }
     );
 }
 
@@ -1548,9 +1548,8 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, ca
         String(payload.data.gge_naziv || '').trim()
     );
 
-    if (source === 'history') return;
-
-    const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
+    const duration = source === 'history' ? ANIM.history : source === 'panel' ? ANIM.panel : ANIM.manual;
+    cameraOpts = { duration, ...cameraOpts };
 
     // Pre-apply odsek view immediately so tiles start loading during the flight animation.
     _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
