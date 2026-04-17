@@ -144,14 +144,16 @@ GGE_HEATMAP_BY_MONTH_SYN = {}
 GGE_HEATMAP_CACHE_PATH_SYN = BASE_DIR / 'data' / 'gge_heatmap_cache_synthetic.json'
 _GGE_CACHE_VERSION = 7  # bumped: synthetic GGE now uses Q25/Q50/Q75 breaks
 
-# Height data: actual relative values (m³/ha) for 3D extrusion, normalised by global max
+# Height data for real data: relative m³/ha (area-normalised)
 HEATMAP_REL_BY_MONTH = {}       # {month: {odsek_id: relative m³/ha}}
-HEATMAP_REL_BY_MONTH_SYN = {}
-HEATMAP_HEIGHT_MAX = 1.0        # global max across all months (real), for 0-1 normalisation
-HEATMAP_HEIGHT_MAX_SYN = 1.0
+HEATMAP_HEIGHT_MAX = 1.0
 GGE_REL_BY_MONTH = {}           # {month: {encoded_gge_key: relative m³/ha}}
-GGE_REL_BY_MONTH_SYN = {}
 GGE_HEIGHT_MAX = 1.0
+# Height data for synthetic data: raw bark-beetles/m² (already area-normalised in source)
+# Using HEATMAP_ABS_BY_MONTH_SYN as height source (abs = raw/area * area = raw for synthetic)
+HEATMAP_REL_BY_MONTH_SYN = {}   # kept for potential future use; not used for heights
+HEATMAP_HEIGHT_MAX_SYN = 1.0
+GGE_RAW_BY_MONTH_SYN = {}       # {month: {encoded_gge_key: raw sum per GGE (no area division)}}
 GGE_HEIGHT_MAX_SYN = 1.0
 
 # GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
@@ -704,6 +706,22 @@ def _compute_gge_rel_by_month(abs_by_month):
     return gge_rel
 
 
+def _compute_gge_raw_by_month(raw_by_month):
+    """Sum raw values per GGE per month without area-normalisation.
+    Used for synthetic data where source values are already per-area units.
+    Returns {month: {encoded_gge_key: raw_sum}}.
+    """
+    result = {}
+    for month, odsek_data in raw_by_month.items():
+        gge_sums = defaultdict(float)
+        for odsek_id, val in odsek_data.items():
+            gge_key = ODSEK_TO_GGE.get(odsek_id)
+            if gge_key:
+                gge_sums[gge_key] += val
+        result[month] = {_gge_key_encode(*k): round(v, 4) for k, v in gge_sums.items()}
+    return result
+
+
 def load_heatmap_data():
     global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, HEATMAP_ABS_BY_MONTH
     global FORECAST_START_MONTH, GGE_HEATMAP_BY_MONTH
@@ -861,7 +879,7 @@ def _load_heatmap_dataset(past_path, future_path, label, raw_breaks=None):
 def load_heatmap_data_synthetic():
     global HEATMAP_MONTHS_SYN, HEATMAP_NZ_BREAKS_SYN, HEATMAP_BY_MONTH_SYN
     global HEATMAP_ABS_BY_MONTH_SYN, FORECAST_START_MONTH_SYN, GGE_HEATMAP_BY_MONTH_SYN
-    global HEATMAP_REL_BY_MONTH_SYN, HEATMAP_HEIGHT_MAX_SYN, GGE_REL_BY_MONTH_SYN, GGE_HEIGHT_MAX_SYN
+    global HEATMAP_REL_BY_MONTH_SYN, HEATMAP_HEIGHT_MAX_SYN, GGE_RAW_BY_MONTH_SYN, GGE_HEIGHT_MAX_SYN
 
     (HEATMAP_MONTHS_SYN,
      HEATMAP_NZ_BREAKS_SYN,
@@ -875,8 +893,10 @@ def load_heatmap_data_synthetic():
          raw_breaks=HEATMAP_BREAKS_SYN
      )
 
+    # Synthetic source values are already bark-beetles/m² — use them directly for heights.
+    # HEATMAP_ABS_BY_MONTH_SYN = raw/area * area = raw (the area division cancels out).
     HEATMAP_HEIGHT_MAX_SYN = _p99(
-        [v for m in HEATMAP_REL_BY_MONTH_SYN.values() for v in m.values()]
+        [v for m in HEATMAP_ABS_BY_MONTH_SYN.values() for v in m.values()]
     )
 
     if HEATMAP_ABS_BY_MONTH_SYN:
@@ -887,9 +907,10 @@ def load_heatmap_data_synthetic():
             label='synthetic',
             raw_breaks=GGE_HEATMAP_BREAKS_SYN
         )
-        GGE_REL_BY_MONTH_SYN = _compute_gge_rel_by_month(HEATMAP_ABS_BY_MONTH_SYN)
+        # Raw sums per GGE (no area division) — consistent with how GGE colors are bucketed.
+        GGE_RAW_BY_MONTH_SYN = _compute_gge_raw_by_month(HEATMAP_ABS_BY_MONTH_SYN)
         GGE_HEIGHT_MAX_SYN = _p99(
-            [v for m in GGE_REL_BY_MONTH_SYN.values() for v in m.values()]
+            [v for m in GGE_RAW_BY_MONTH_SYN.values() for v in m.values()]
         )
 
 
@@ -1326,7 +1347,9 @@ class TileHandler(BaseHTTPRequestHandler):
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            src = HEATMAP_REL_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_REL_BY_MONTH
+            # Synthetic: serve raw bark-beetles/m² values (already area-normalised in source).
+            # Real: serve relative m³/ha (area-normalised by server).
+            src = HEATMAP_ABS_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_REL_BY_MONTH
             self._send_json(200, src.get(month, {}))
             return
 
@@ -1337,7 +1360,7 @@ class TileHandler(BaseHTTPRequestHandler):
             if not month:
                 self._send_json(400, {'error': 'Missing month parameter'})
                 return
-            src = GGE_REL_BY_MONTH_SYN if dataset == 'synthetic' else GGE_REL_BY_MONTH
+            src = GGE_RAW_BY_MONTH_SYN if dataset == 'synthetic' else GGE_REL_BY_MONTH
             self._send_json(200, src.get(month, {}))
             return
 

@@ -692,8 +692,8 @@ const heatmapInfoEl = document.getElementById('posek-info');
 
 // Max extrusion height in metres — tiles with the global-max value will reach this height.
 // GGE view is national scale (~425 m/px at zoom 8), odsek view is local scale (~53 m/px at zoom 11).
-const MAX_EXTRUSION_HEIGHT_GGE    = 150000;  // 150 km — clearly visible at national zoom
-const MAX_EXTRUSION_HEIGHT_ODSEK  =  30000;  // 30 km  — proportional at local zoom
+const MAX_EXTRUSION_HEIGHT_GGE    = 75000;  // 150 km — clearly visible at national zoom
+const MAX_EXTRUSION_HEIGHT_ODSEK  =  10000;  // 30 km  — proportional at local zoom
 
 // Heatmap state (napolni initHeatmap)
 let heatmapMonths = [];
