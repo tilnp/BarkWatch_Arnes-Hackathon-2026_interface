@@ -4,6 +4,25 @@ Built for the Arnes Hackathon 2026 by Korošci+Tilen.
 
 > This repository contains only the **web interface**. The AI prediction model and synthetic data generation live in a [separate repository](https://github.com/anejm/BarkWatch_Korosci-plus-Tilen).
 
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="images/home_view.png" width="100%"><br>
+    </td>
+    <td align="center">
+      <img src="images/gge_3d.png" width="100%"><br>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="images/odsek_2d.png" width="100%"><br>
+    </td>
+    <td align="center">
+      <img src="images/graph.png" width="100%"><br>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Background
